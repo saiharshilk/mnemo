@@ -1,0 +1,5 @@
+/target
+
+# SQLite data
+*.db
+*.db-journal
