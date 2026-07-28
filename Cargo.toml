@@ -4,3 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+ratatui = "0.29"
+crossterm = "0.28"
+rusqlite = { version = "0.30", features = ["bundled"] }
+rs-fsrs = "1.2"
+chrono = "0.4"
+clap = { version = "4", features = ["derive"] }
+dirs = "5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+csv = "1"
+anyhow = "1"
