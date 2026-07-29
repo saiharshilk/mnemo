@@ -1,6 +1,5 @@
-use crate::db::{
-    self, CardWithReview, Deck, DeckSummary,
-};
+use crate::auth::{github, supabase, AuthUpdate, Session};
+use crate::db::{self, CardWithReview, Deck, DeckSummary};
 use crate::events::{map_key, map_key_in_input, Action};
 use crate::fsrs::scheduler::schedule;
 use crate::ui::CardModalStep;
@@ -8,19 +7,36 @@ use anyhow::Result;
 use chrono::Utc;
 use rs_fsrs::Rating;
 use rusqlite::Connection;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
+use std::thread;
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Screen {
+    Welcome,
+    DeviceAuth {
+        user_code: String,
+        verification_uri: String,
+    },
+    AuthError {
+        message: String,
+    },
     DeckList,
-    DeckView { deck_id: i64 },
-    Review { deck_id: i64 },
+    DeckView {
+        deck_id: i64,
+    },
+    Review {
+        deck_id: i64,
+    },
     CardModal {
         deck_id: i64,
         editing: Option<i64>,
     },
     NewDeckModal,
-    RenameDeckModal { deck_id: i64 },
+    RenameDeckModal {
+        deck_id: i64,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,6 +49,8 @@ pub struct App {
     pub conn: Connection,
     pub should_quit: bool,
     pub screen_stack: Vec<Screen>,
+
+    pub session: Option<Session>,
 
     pub decks: Vec<DeckSummary>,
     pub deck_list_selected: usize,
@@ -53,14 +71,36 @@ pub struct App {
 
     delete_pending: Option<DeleteTarget>,
     pub delete_pending_at: Option<Instant>,
+
+    auth_rx: Option<mpsc::Receiver<AuthUpdate>>,
+    auth_cancel: Option<std::sync::Arc<AtomicBool>>,
 }
 
 impl App {
     pub fn new(conn: Connection) -> Result<Self> {
+        // Load any persisted session and confirm the stored token still works.
+        // If it's stale or unparseable, drop it on disk so the next launch is clean.
+        let session = match Session::load()? {
+            Some(s) if github::validate_token(&s.github_token) => Some(s),
+            _ => {
+                if let Ok(p) = crate::db::session_path() {
+                    let _ = std::fs::remove_file(p);
+                }
+                None
+            }
+        };
+
+        let stack_top = if session.is_some() {
+            Screen::DeckList
+        } else {
+            Screen::Welcome
+        };
+
         let mut app = Self {
             conn,
             should_quit: false,
-            screen_stack: vec![Screen::DeckList],
+            session,
+            screen_stack: vec![stack_top],
             decks: Vec::new(),
             deck_list_selected: 0,
             current_deck: None,
@@ -76,8 +116,13 @@ impl App {
             card_draft_back: String::new(),
             delete_pending: None,
             delete_pending_at: None,
+            auth_rx: None,
+            auth_cancel: None,
         };
-        app.refresh_decks()?;
+
+        if app.session.is_some() {
+            app.refresh_decks()?;
+        }
         Ok(app)
     }
 
@@ -99,6 +144,9 @@ impl App {
     pub fn handle_key(&mut self, action: Action) -> Result<()> {
         if self.is_input_screen() {
             return self.handle_input_action(action);
+        }
+        if self.is_auth_screen() {
+            return self.handle_auth_screen_action(action);
         }
 
         match action {
@@ -135,6 +183,25 @@ impl App {
         )
     }
 
+    fn is_auth_screen(&self) -> bool {
+        matches!(
+            self.current_screen(),
+            Screen::Welcome | Screen::DeviceAuth { .. } | Screen::AuthError { .. }
+        )
+    }
+
+    fn handle_auth_screen_action(&mut self, action: Action) -> Result<()> {
+        match (self.current_screen().clone(), action) {
+            (Screen::Welcome, Action::Confirm) => self.start_device_flow()?,
+            (_, Action::Quit) => self.should_quit = true,
+            (Screen::DeviceAuth { .. }, Action::Confirm) => self.open_verification_url(),
+            (Screen::AuthError { .. }, Action::Review) => self.retry_auth()?,
+            (_, Action::Back) => self.handle_auth_back()?,
+            _ => {}
+        }
+        Ok(())
+    }
+
     fn handle_input_action(&mut self, action: Action) -> Result<()> {
         match action {
             Action::Back => self.pop_screen()?,
@@ -158,6 +225,170 @@ impl App {
             self.handle_key(action)?;
         }
         Ok(())
+    }
+
+    /// Drains any pending auth worker messages. Called once per UI tick after key
+    /// processing. Failure modes are converted to AuthError so the user can retry.
+    pub fn poll_auth_updates(&mut self) -> Result<()> {
+        let Some(rx) = self.auth_rx.as_ref() else {
+            return Ok(());
+        };
+        let update = match rx.try_recv() {
+            Ok(u) => u,
+            Err(mpsc::TryRecvError::Empty) => return Ok(()),
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.auth_rx = None;
+                self.auth_cancel = None;
+                return Ok(());
+            }
+        };
+        match update {
+            AuthUpdate::Completed(session) => self.complete_login(session),
+            AuthUpdate::Failed(msg) => self.show_auth_error(msg),
+        }
+        Ok(())
+    }
+
+    fn complete_login(&mut self, session: Session) {
+        if let Err(e) = session.save() {
+            // Disk-write failure must not crash the app. Surface it on the
+            // error screen so the user knows the next launch will re-login.
+            self.show_auth_error(format!("login succeeded but could not persist session: {e}"));
+            return;
+        }
+        self.session = Some(session);
+        self.screen_stack
+            .retain(|s| !matches!(s, Screen::DeviceAuth { .. } | Screen::AuthError { .. }));
+        // If Welcome is still on the stack (welcome → device_auth → success path),
+        // drop it so we land cleanly on DeckList.
+        if matches!(self.screen_stack.last(), Some(Screen::Welcome)) {
+            self.screen_stack.pop();
+        }
+        self.screen_stack.push(Screen::DeckList);
+        self.refresh_decks().ok();
+        self.auth_rx = None;
+        self.auth_cancel = None;
+    }
+
+    fn show_auth_error(&mut self, message: String) {
+        // Drop any half-active auth state so the error screen isn't bombarded
+        // by stale messages from a thread that was already cancelled.
+        self.auth_rx = None;
+        self.auth_cancel = None;
+        self.screen_stack
+            .retain(|s| !matches!(s, Screen::DeviceAuth { .. } | Screen::AuthError { .. }));
+        self.screen_stack.push(Screen::AuthError { message });
+    }
+
+    fn start_device_flow(&mut self) -> Result<()> {
+        let client_id = match std::env::var("GITHUB_CLIENT_ID") {
+            Ok(v) if !v.is_empty() => v,
+            _ => {
+                self.show_auth_error(
+                    "GITHUB_CLIENT_ID is not set — copy .env.example to .env and configure it"
+                        .to_string(),
+                );
+                return Ok(());
+            }
+        };
+
+        let resp = match github::request_device_code(&client_id) {
+            Ok(r) => r,
+            Err(e) => {
+                self.show_auth_error(format!("could not reach github: {e}"));
+                return Ok(());
+            }
+        };
+
+        self.screen_stack
+            .retain(|s| !matches!(s, Screen::DeviceAuth { .. } | Screen::AuthError { .. }));
+        self.screen_stack.push(Screen::DeviceAuth {
+            user_code: resp.user_code.clone(),
+            verification_uri: resp.verification_uri.clone(),
+        });
+
+        let (tx, rx) = mpsc::channel();
+        let cancel = std::sync::Arc::new(AtomicBool::new(false));
+        let cancel_for_thread = cancel.clone();
+        let device_code = resp.device_code.clone();
+        let mut interval = resp.interval;
+        thread::spawn(move || {
+            let poll = github::poll_for_token(
+                &client_id,
+                &device_code,
+                &mut interval,
+                &cancel_for_thread,
+            );
+            let update = match poll {
+                github::PollResult::Success(token) => match github::fetch_user(&token) {
+                    Ok(user) => {
+                        if let (Ok(url), Ok(key)) = (
+                            std::env::var("SUPABASE_URL"),
+                            std::env::var("SUPABASE_ANON_KEY"),
+                        ) {
+                            if let Err(e) = supabase::upsert_user(&url, &key, &user) {
+                                let _ = tx.send(AuthUpdate::Failed(format!(
+                                    "supabase upsert failed: {e}"
+                                )));
+                                return;
+                            }
+                        }
+                        AuthUpdate::Completed(Session {
+                            github_token: token,
+                            github_id: user.id,
+                            github_username: user.login,
+                            avatar_url: user.avatar_url,
+                        })
+                    }
+                    Err(e) => AuthUpdate::Failed(format!("github /user failed: {e}")),
+                },
+                github::PollResult::Error(msg) => AuthUpdate::Failed(msg),
+                github::PollResult::Cancelled => return,
+            };
+            let _ = tx.send(update);
+        });
+
+        self.auth_rx = Some(rx);
+        self.auth_cancel = Some(cancel);
+        Ok(())
+    }
+
+    fn open_verification_url(&self) {
+        let Screen::DeviceAuth {
+            verification_uri, ..
+        } = self.current_screen().clone()
+        else {
+            return;
+        };
+        // Silent on failure: the on-screen hint already tells the user
+        // they can visit the URL manually.
+        let _ = open::that(&verification_uri);
+    }
+
+    fn retry_auth(&mut self) -> Result<()> {
+        self.start_device_flow()
+    }
+
+    fn handle_auth_back(&mut self) -> Result<()> {
+        match self.current_screen() {
+            Screen::Welcome => {
+                // Welcome is the bottom of the stack — Esc does nothing here.
+            }
+            Screen::DeviceAuth { .. } | Screen::AuthError { .. } => {
+                self.cancel_auth();
+                self.screen_stack
+                    .retain(|s| !matches!(s, Screen::DeviceAuth { .. } | Screen::AuthError { .. }));
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn cancel_auth(&mut self) {
+        if let Some(cancel) = self.auth_cancel.take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        self.auth_rx = None;
     }
 
     fn move_selection(&mut self, delta: i32) {

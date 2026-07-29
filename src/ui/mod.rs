@@ -1,24 +1,32 @@
+use crate::app::{App, Screen};
 use ratatui::Frame;
 
-use crate::app::App;
-
+mod auth_error;
 mod card_modal;
 mod deck_list;
 mod deck_view;
+mod device_auth;
 mod review;
 pub mod theme;
+mod welcome;
 
 pub use card_modal::CardModalStep;
 
 pub fn draw(f: &mut Frame, app: &App) {
     match app.current_screen() {
-        crate::app::Screen::DeckList => deck_list::draw(
+        Screen::Welcome => welcome::draw(f),
+        Screen::DeviceAuth {
+            user_code,
+            verification_uri,
+        } => device_auth::draw(f, user_code, verification_uri),
+        Screen::AuthError { message } => auth_error::draw(f, message),
+        Screen::DeckList => deck_list::draw(
             f,
             &app.decks,
             app.deck_list_selected,
             &deck_list::deck_list_hint(app.delete_pending()),
         ),
-        crate::app::Screen::DeckView { .. } => {
+        Screen::DeckView { .. } => {
             if let Some(deck) = &app.current_deck {
                 deck_view::draw(
                     f,
@@ -29,14 +37,14 @@ pub fn draw(f: &mut Frame, app: &App) {
                 );
             }
         }
-        crate::app::Screen::Review { .. } => review::draw(
+        Screen::Review { .. } => review::draw(
             f,
             app.review_current(),
             app.review_flipped,
             app.review_queue.len().saturating_sub(app.review_index),
             app.review_message.as_deref(),
         ),
-        crate::app::Screen::CardModal { editing, .. } => card_modal::draw(
+        Screen::CardModal { editing, .. } => card_modal::draw(
             f,
             app.current_deck
                 .as_ref()
@@ -46,10 +54,10 @@ pub fn draw(f: &mut Frame, app: &App) {
             &app.input_buffer,
             editing.is_some(),
         ),
-        crate::app::Screen::NewDeckModal => {
+        Screen::NewDeckModal => {
             card_modal::draw_simple_modal(f, "New Deck", "Deck name", &app.input_buffer);
         }
-        crate::app::Screen::RenameDeckModal { .. } => {
+        Screen::RenameDeckModal { .. } => {
             card_modal::draw_simple_modal(f, "Rename Deck", "New name", &app.input_buffer);
         }
     }

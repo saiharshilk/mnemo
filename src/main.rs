@@ -1,7 +1,9 @@
 mod app;
+mod auth;
 mod db;
 mod events;
 mod fsrs;
+mod paths;
 mod ui;
 
 use anyhow::Result;
@@ -23,6 +25,10 @@ struct Cli {}
 
 fn main() -> Result<()> {
     let _cli = Cli::parse();
+
+    // Load secrets from .env if present; ignore when the file is missing.
+    let _ = dotenvy::dotenv();
+
     let conn = open_connection()?;
     let mut app = App::new(conn)?;
 
@@ -57,6 +63,9 @@ fn run(
                 app.process_event(key)?;
             }
         }
+
+        // Drain any pending device-flow results between keystrokes.
+        app.poll_auth_updates()?;
 
         if app.should_quit {
             break;

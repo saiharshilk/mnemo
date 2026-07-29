@@ -3,3 +3,9 @@
 # SQLite data
 *.db
 *.db-journal
+
+# Local secrets (GitHub OAuth + Supabase)
+.env
+
+# Local session cache (contains GitHub access token)
+session.json
