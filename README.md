@@ -1,64 +1,91 @@
-# mnemo
+mnemo ꕤ spaced repetition, right in your terminal
 
-A terminal-based spaced-repetition flashcard app for studying without leaving the terminal. Built in Rust with [FSRS](https://github.com/open-spaced-repetition/fsrs) scheduling and a minimal "researcher" aesthetic.
+quick honest question: when's the last time you actually sat down and learned something for you?
 
-## Requirements
+not the framework docs for work. not the side project backlog. the language you keep meaning to pick up, the stuff you wanted to have memorized by now, the random rabbit hole you fell into once and never went back to.
 
-- Rust stable (2021 edition or later)
-- A terminal with UTF-8 support
+it's easy to let all of that quietly disappear between tabs and terminals 😭 mnemo is one small way to pull a sliver of it back — a flashcard app that lives right where you already spend your day, so reviewing a few cards is as easy as opening a new pane ✌️
 
-## Build
+## Motive
+
+- **low friction beats good intentions.** if studying means opening another app, it mostly doesn't happen. if it's one command away from your shell, it does.
+- **quiet by design.** no dashboards, no notifications, no color for color's sake — just cards, a prompt, and you.
+- **built on real memory research.** mnemo uses FSRS, the modern successor to the older SM-2 algorithm — it models how *you specifically* forget things, so it stops nagging you about cards you already know cold.
+
+## Features: current
+
+- make decks and cards with a few keystrokes
+- tells you exactly what to review, and when, using FSRS spaced repetition
+- cloud-synced identity via GitHub + Supabase — sign in once, stay signed in
+- cloze deletion cards, tags, and lightweight markdown (`**bold**`, `*italic*`, `` `code` ``)
+- import/export decks as CSV, right from the command line
+
+## Features: V2 (aka stuff i want)
+
+- full deck/card sync across devices, not just identity ✌️
+- a stats screen — retention rate, review heatmap, forecast of what's coming due
+- session notes for cards you keep getting wrong (so future-you knows why)
+- multiple profiles, for when studying and hoarding niche interests need separate decks 😭
+
+## How FSRS (spaced repetition) works
+
+mnemo cards each carry a memory model — `stability` and `difficulty` — instead of a single fixed interval.
+
+after reviewing a card, you rate it: **again**, **hard**, **good**, or **easy**. each rating updates the model:
+
+- **again** = you forgot it. stability resets, you'll see it again soon.
+- **hard / good / easy** = you remembered it, to varying degrees of ease. the next interval grows accordingly — smaller for hard, larger for easy — computed fresh each time from your actual review history, not a fixed multiplier.
+
+the practical effect: cards you're shaky on show up constantly, cards you've clearly mastered fade into the background. it's adaptive in a way a fixed "review every 3 days" schedule never could be.
+
+## Get it running
 
 ```bash
+git clone https://github.com/<your-username>/mnemo.git
+cd mnemo
 cargo build --release
-```
-
-## Run
-
-```bash
 cargo run
 ```
 
-The first launch drops you on the Welcome screen and walks you through GitHub device-flow login (your browser opens automatically to the verification URL). Once signed in, the session is cached locally and subsequent launches skip straight to your decks.
+**Requirements:** Rust stable (2021 edition or later), a terminal with UTF-8 support.
 
-The local data directory holds both the SQLite database and the session file:
+first launch drops you on the welcome screen and walks you through GitHub device-flow login (your browser opens automatically to the verification URL). once signed in, your session is cached locally and future launches skip straight to your decks.
 
-- **Linux:**  `~/.local/share/mnemo/{data.db,session.json}`
-- **macOS:**  `~/Library/Application Support/mnemo/{data.db,session.json}`
-- **Windows:** `%LOCALAPPDATA%\mnemo\{data.db,session.json}`
+your data lives here:
 
-## Stage 2 setup (one-time)
+| platform | path |
+|---|---|
+| Linux | `~/.local/share/mnemo/{data.db,session.json}` |
+| macOS | `~/Library/Application Support/mnemo/{data.db,session.json}` |
+| Windows | `%LOCALAPPDATA%\mnemo\{data.db,session.json}` |
 
-Stage 2 adds a Welcome screen + GitHub device-flow login + Supabase identity. Both decks/cards and the new auth flow need configuration before first use.
+## One-time setup (auth)
 
-### 1. Configure secrets
+mnemo needs a GitHub OAuth App and a Supabase project before your first login. yes, it's a little setup — but it's the price of not losing your account to a browser cache clear. 😭
+
+**1. configure secrets**
 
 ```bash
 cp .env.example .env
 ```
 
-Then edit `.env` and fill in:
+edit `.env` and fill in:
+- `GITHUB_CLIENT_ID` — from a GitHub OAuth App with device flow enabled (below)
+- `SUPABASE_URL` — e.g. `https://abcdefgh.supabase.co`
+- `SUPABASE_ANON_KEY` — the anon public key from Project Settings → API
 
-- **`GITHUB_CLIENT_ID`** — from a GitHub OAuth App with **Device Flow** enabled (see below).
-- **`SUPABASE_URL`** — e.g. `https://abcdefgh.supabase.co`.
-- **`SUPABASE_ANON_KEY`** — anon public key from Project Settings → API.
+**2. create a GitHub OAuth App**
 
-Both keys must be present for the post-login Supabase identity upsert to run. The local SQLite database still stores all your deck/card data — Supabase is only used as an identity layer.
+- go to [github.com/settings/applications/new](https://github.com/settings/applications/new)
+- application name: anything (`mnemo` works)
+- homepage URL: anything (e.g. `http://localhost:8080`) — never actually contacted
+- authorization callback URL: anything — device flow doesn't use it
+- after creating it, scroll to **Device Flow** and make sure it's enabled (on by default for new apps)
+- copy the **Client ID** into `.env`. no client secret needed — device flow doesn't use one.
 
-### 2. Create a GitHub OAuth App (with Device Flow)
+**3. create the Supabase `users` table**
 
-1. Go to **GitHub → Settings → Developer settings → OAuth Apps → New OAuth App**:
-   <https://github.com/settings/applications/new>
-2. Fill in:
-   - **Application name:** anything (e.g. `mnemo`)
-   - **Homepage URL:** any URL (e.g. `http://localhost:8080`); never contacted
-   - **Authorization callback URL:** any URL (not used by device flow)
-3. After creation, on the app settings page scroll to **Device Flow** and ensure it is **enabled** (it is by default for new OAuth Apps on GitHub.com).
-4. Copy the **Client ID** into `GITHUB_CLIENT_ID` in `.env`. No client secret is required — device flow does not use one.
-
-### 3. Create the Supabase `users` table
-
-From the Supabase dashboard SQL editor (or `psql`), run:
+from the Supabase SQL editor:
 
 ```sql
 create table if not exists public.users (
@@ -69,33 +96,31 @@ create table if not exists public.users (
 );
 
 -- Supabase tables default to RLS enabled, which blocks the anon upsert from
--- the TUI. Either disable RLS for this single table:
+-- the TUI. either disable RLS for this one table:
 alter table public.users disable row level security;
 
--- …or keep RLS on and add an explicit policy that lets anon upsert:
+-- ...or keep RLS on and add an explicit policy that allows anon upsert:
 -- create policy "anon upsert users" on public.users
 --   for all to anon
 --   using (true)
 --   with check (true);
 ```
 
-The Rust side calls `POST {SUPABASE_URL}/rest/v1/users` with `resolution=merge-duplicates` on login, so the row is created on first sign-in and updated on every subsequent login. **The table needs to exist before first login** — the app does not create it from Rust.
+mnemo calls `POST {SUPABASE_URL}/rest/v1/users` with `resolution=merge-duplicates` on every login, so this row is created on first sign-in and refreshed on every one after. the table has to exist before your first login — the app won't create it for you.
 
-## Usage
+## Guide
 
-On launch you see either the **Deck List** (when a valid session is cached) or the **Welcome** screen. Navigate with arrow keys or `j`/`k`, press `Enter` to open a deck.
+| where | keys |
+|---|---|
+| welcome | `enter` log in with github · `q` quit |
+| device auth | `enter` open browser to verification URL · `esc` cancel |
+| auth error | `r` retry · `esc` back to welcome |
+| deck list | `enter` open · `n` new deck · `e` rename · `d` delete (twice to confirm) · `s` stats · `esc`/`q` quit |
+| inside a deck | `n` new card · `enter`/`e` edit · `d` delete (twice) · `r` review · `t` filter by tag · `esc` back |
+| new / edit card | type front, `enter`, type back, `enter`, type tags (optional), `enter` to save · `esc` cancels |
+| review | `space`/`enter` flip · then rate: `1` again · `2` hard · `3` good · `4` easy |
 
-| Screen | Keys |
-|--------|------|
-| Welcome | `Enter` log in to github · `q` quit |
-| Device Auth | `Enter` open browser to verification URL · `Esc` cancel |
-| Auth Error | `r` retry · `Esc` back to Welcome |
-| Deck List | `n` new deck · `e` rename · `d` delete (press twice) · `Enter` open · `Esc`/`q` quit |
-| Deck View | `n` new card · `Enter`/`e` edit · `d` delete (press twice) · `r` review · `Esc` back |
-| Review | `Space`/`Enter` flip · `1`–`4` rate (again/hard/good/easy) · `Esc` end session |
-| Modals | type text · `Enter` next/save · `Esc` cancel |
-
-New cards appear in review immediately. Due cards are those with no review state yet or a `due_date` in the past.
+new cards enter the review queue immediately. a card is due when it has no review state yet, or its `due_date` has passed.
 
 ## Test
 
@@ -103,15 +128,20 @@ New cards appear in review immediately. Due cards are those with no review state
 cargo test
 ```
 
-Scheduler tests verify FSRS integration (e.g. "again" schedules soon, "easy" grows the interval, four intervals returned).
+scheduler tests verify the FSRS integration end to end — "again" schedules soon, "easy" grows the interval, and all four ratings return a distinct predicted interval.
 
-## Stack
+## Built with
 
-- [ratatui](https://ratatui.rs/) + [crossterm](https://github.com/crossterm-rs/crossterm) — TUI
-- [rusqlite](https://github.com/rusqlite/rusqlite) — SQLite storage
-- [rs-fsrs](https://github.com/open-spaced-repetition/rs-fsrs) — FSRS scheduling
-- [chrono](https://github.com/chronotope/chrono) — timestamps
-- [clap](https://github.com/clap-rs/clap) — CLI parsing
-- [ureq](https://github.com/algesten/ureq) — sync HTTP for GitHub device flow + Supabase REST
-- [dotenvy](https://github.com/allan2/dotenvy) — local `.env` loader
-- [open](https://github.com/Stebalien/rust-open) — `xdg-open`/`open` to launch the system browser
+- Rust
+- ratatui + crossterm — the TUI itself
+- rusqlite — local SQLite storage
+- rs-fsrs — FSRS scheduling, no ML framework bloat
+- chrono — timestamps
+- clap — CLI parsing
+- ureq — sync HTTP for GitHub device flow + Supabase REST
+- dotenvy — local `.env` loading
+- open — launches your system browser for login
+
+## Got questions or suggestions?
+
+tell me now. [your-email-here]
