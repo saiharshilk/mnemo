@@ -144,4 +144,4 @@ scheduler tests verify the FSRS integration end to end — "again" schedules soo
 
 ## Got questions or suggestions?
 
-tell me now. [your-email-here]
+tell me now. saiharshilk@gmail.com
