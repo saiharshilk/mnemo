@@ -30,7 +30,7 @@ pub fn draw(f: &mut Frame) {
 
     f.render_widget(
         Paragraph::new(Line::from(Span::styled(
-            "welcome to flashcards-tui",
+            "welcome to mnemo",
             theme::title().fg(theme::ACCENT),
         ))),
         lines[0],

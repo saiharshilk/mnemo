@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
-const USER_AGENT: &str = "flashcard-tui";
+const USER_AGENT: &str = "mnemo";
 const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
 const SLOW_DOWN_BUMP: Duration = Duration::from_secs(5);
 
@@ -169,14 +169,26 @@ pub fn fetch_user(token: &str) -> Result<GitHubUser> {
     })
 }
 
-/// Used at startup to decide whether a persisted session is still valid.
-/// Returns false on any failure so we drop to the Welcome screen.
-pub fn validate_token(token: &str) -> bool {
-    http_agent()
+#[derive(Debug)]
+pub enum TokenStatus {
+    Valid,
+    Invalid,
+    Inconclusive(anyhow::Error),
+}
+
+/// Lightweight check used at startup to decide whether a persisted session
+/// is still valid. Distinguishes a revoked token (401) from transient
+/// network failures so a flaky connection doesn't force re-authentication.
+pub fn check_token(token: &str) -> TokenStatus {
+    match http_agent()
         .get("https://api.github.com/user")
         .set("Authorization", &format!("Bearer {token}"))
         .set("Accept", "application/vnd.github+json")
         .set("User-Agent", USER_AGENT)
         .call()
-        .is_ok()
+    {
+        Ok(_) => TokenStatus::Valid,
+        Err(ureq::Error::Status(401, _)) => TokenStatus::Invalid,
+        Err(e) => TokenStatus::Inconclusive(e.into()),
+    }
 }

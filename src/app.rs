@@ -78,23 +78,7 @@ pub struct App {
 
 impl App {
     pub fn new(conn: Connection) -> Result<Self> {
-        // Load any persisted session and confirm the stored token still works.
-        // If it's stale or unparseable, drop it on disk so the next launch is clean.
-        let session = match Session::load()? {
-            Some(s) if github::validate_token(&s.github_token) => Some(s),
-            _ => {
-                if let Ok(p) = crate::db::session_path() {
-                    let _ = std::fs::remove_file(p);
-                }
-                None
-            }
-        };
-
-        let stack_top = if session.is_some() {
-            Screen::DeckList
-        } else {
-            Screen::Welcome
-        };
+        let (session, stack_top) = Self::load_session()?;
 
         let mut app = Self {
             conn,
@@ -124,6 +108,54 @@ impl App {
             app.refresh_decks()?;
         }
         Ok(app)
+    }
+
+    /// Loads a persisted session at startup and decides which screen to show.
+    /// - 200 from GitHub -> keep session, start on DeckList
+    /// - 401 from GitHub -> clear session, start on Welcome
+    /// - network failure -> keep session, warn on stderr, start on DeckList
+    fn load_session() -> Result<(Option<Session>, Screen)> {
+        let path = match crate::db::session_path() {
+            Ok(p) => p,
+            Err(_) => {
+                eprintln!("auth: no session file found");
+                return Ok((None, Screen::Welcome));
+            }
+        };
+
+        if !path.exists() {
+            eprintln!("auth: no session file found");
+            return Ok((None, Screen::Welcome));
+        }
+
+        let session = match Session::load()? {
+            Some(s) => s,
+            None => {
+                let _ = std::fs::remove_file(&path);
+                eprintln!("auth: session file malformed, clearing");
+                return Ok((None, Screen::Welcome));
+            }
+        };
+
+        let session = match github::check_token(&session.github_token) {
+            github::TokenStatus::Valid => {
+                eprintln!("auth: session found, token valid, skipping login");
+                return Ok((Some(session), Screen::DeckList));
+            }
+            github::TokenStatus::Invalid => {
+                eprintln!("auth: session found, token invalid, clearing");
+                let _ = std::fs::remove_file(&path);
+                None
+            }
+            github::TokenStatus::Inconclusive(e) => {
+                eprintln!(
+                    "auth: session found, network check failed, proceeding anyway: {e}"
+                );
+                Some(session)
+            }
+        };
+
+        Ok((session, Screen::Welcome))
     }
 
     pub fn current_screen(&self) -> &Screen {

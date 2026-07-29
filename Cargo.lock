@@ -394,26 +394,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
-name = "flashcard-tui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "clap",
- "crossterm",
- "csv",
- "dirs",
- "dotenvy",
- "open",
- "ratatui",
- "rs-fsrs",
- "rusqlite",
- "serde",
- "serde_json",
- "ureq",
-]
-
-[[package]]
 name = "flate2"
 version = "1.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -803,6 +783,26 @@ dependencies = [
  "log",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "mnemo"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "crossterm",
+ "csv",
+ "dirs",
+ "dotenvy",
+ "open",
+ "ratatui",
+ "rs-fsrs",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "ureq",
 ]
 
 [[package]]

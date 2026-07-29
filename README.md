@@ -1,4 +1,4 @@
-# flashcard-tui
+# mnemo
 
 A terminal-based spaced-repetition flashcard app for studying without leaving the terminal. Built in Rust with [FSRS](https://github.com/open-spaced-repetition/fsrs) scheduling and a minimal "researcher" aesthetic.
 
@@ -23,9 +23,9 @@ The first launch drops you on the Welcome screen and walks you through GitHub de
 
 The local data directory holds both the SQLite database and the session file:
 
-- **Linux:**  `~/.local/share/flashcard-tui/{data.db,session.json}`
-- **macOS:**  `~/Library/Application Support/flashcard-tui/{data.db,session.json}`
-- **Windows:** `%LOCALAPPDATA%\flashcard-tui\{data.db,session.json}`
+- **Linux:**  `~/.local/share/mnemo/{data.db,session.json}`
+- **macOS:**  `~/Library/Application Support/mnemo/{data.db,session.json}`
+- **Windows:** `%LOCALAPPDATA%\mnemo\{data.db,session.json}`
 
 ## Stage 2 setup (one-time)
 
@@ -50,7 +50,7 @@ Both keys must be present for the post-login Supabase identity upsert to run. Th
 1. Go to **GitHub → Settings → Developer settings → OAuth Apps → New OAuth App**:
    <https://github.com/settings/applications/new>
 2. Fill in:
-   - **Application name:** anything (e.g. `flashcard-tui`)
+   - **Application name:** anything (e.g. `mnemo`)
    - **Homepage URL:** any URL (e.g. `http://localhost:8080`); never contacted
    - **Authorization callback URL:** any URL (not used by device flow)
 3. After creation, on the app settings page scroll to **Device Flow** and ensure it is **enabled** (it is by default for new OAuth Apps on GitHub.com).

@@ -20,7 +20,7 @@ use std::io;
 use std::time::Duration;
 
 #[derive(Parser)]
-#[command(name = "flashcard-tui", about = "Terminal spaced-repetition flashcards")]
+#[command(name = "mnemo", about = "Terminal spaced-repetition flashcards")]
 struct Cli {}
 
 fn main() -> Result<()> {
