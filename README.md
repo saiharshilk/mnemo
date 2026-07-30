@@ -41,7 +41,7 @@ the practical effect: cards you're shaky on show up constantly, cards you've cle
 ## Get it running
 
 ```bash
-git clone https://github.com/<your-username>/mnemo.git
+git clone https://github.com/saiharshilk/mnemo.git
 cd mnemo
 cargo build --release
 cargo run
