@@ -11,6 +11,8 @@ pub enum Action {
     Edit,
     Delete,
     Review,
+    Stats,
+    ToggleView,
     Flip,
     Rate(u8),
     Char(char),
@@ -35,7 +37,10 @@ pub fn map_key(event: KeyEvent) -> Option<Action> {
         KeyCode::Char('e') => Some(Action::Edit),
         KeyCode::Char('d') => Some(Action::Delete),
         KeyCode::Char('r') => Some(Action::Review),
-        KeyCode::Char('s') => None,
+        // 's' opens the Stats screen from DeckList and is ignored elsewhere.
+        KeyCode::Char('s') => Some(Action::Stats),
+        // 'v' toggles the heatmap view on the Stats screen.
+        KeyCode::Char('v') => Some(Action::ToggleView),
         KeyCode::Char(' ') => Some(Action::Flip),
         KeyCode::Char('1') => Some(Action::Rate(1)),
         KeyCode::Char('2') => Some(Action::Rate(2)),

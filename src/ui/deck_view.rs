@@ -1,10 +1,10 @@
 use crate::db::{CardState, CardWithReview, Deck};
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout},
     style::Style,
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph},
-    Frame,
 };
 
 use super::theme;
@@ -71,7 +71,10 @@ fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
     } else {
-        format!("{}…", s.chars().take(max.saturating_sub(1)).collect::<String>())
+        format!(
+            "{}…",
+            s.chars().take(max.saturating_sub(1)).collect::<String>()
+        )
     }
 }
 

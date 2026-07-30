@@ -40,12 +40,12 @@ impl Session {
         // data_dir() already creates the directory, but re-create it here to guard
         // against deletion/races between path resolution and the actual write.
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create session directory: {}", parent.display()))?;
+            fs::create_dir_all(parent).with_context(|| {
+                format!("failed to create session directory: {}", parent.display())
+            })?;
         }
         let bytes = serde_json::to_vec_pretty(self).context("failed to serialize session")?;
-        fs::write(&path, bytes)
-            .with_context(|| format!("failed to write {}", path.display()))?;
+        fs::write(&path, bytes).with_context(|| format!("failed to write {}", path.display()))?;
         Ok(())
     }
 }

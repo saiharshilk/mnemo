@@ -67,10 +67,7 @@ pub fn schedule(
     (from_fsrs_card(card_id, &result.card), elapsed_days)
 }
 
-pub fn preview_intervals(
-    review: Option<&ReviewState>,
-    now: DateTime<Utc>,
-) -> [Duration; 4] {
+pub fn preview_intervals(review: Option<&ReviewState>, now: DateTime<Utc>) -> [Duration; 4] {
     let fsrs = FSRS::default();
     let fsrs_card = to_fsrs_card(review, now);
     let record_log = fsrs.repeat(fsrs_card, now);

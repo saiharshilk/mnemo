@@ -2,10 +2,10 @@ use crate::db::CardWithReview;
 use crate::fsrs::scheduler::{format_interval, preview_intervals};
 use chrono::Utc;
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Direction, Layout},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
-    Frame,
 };
 
 use super::theme;

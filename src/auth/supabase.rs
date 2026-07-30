@@ -1,5 +1,5 @@
 use crate::auth::github::GitHubUser;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 /// Upserts a `users` row in the Supabase PostgREST `users` table.
 /// Requires the table to already exist in the Supabase project with columns:

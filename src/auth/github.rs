@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::Deserialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
@@ -11,9 +11,7 @@ const SLOW_DOWN_BUMP: Duration = Duration::from_secs(5);
 /// All GitHub (and Supabase) calls go through this agent so a stuck network
 /// call can't freeze the UI thread for ureq's 30s default.
 pub fn http_agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .timeout(HTTP_TIMEOUT)
-        .build()
+    ureq::AgentBuilder::new().timeout(HTTP_TIMEOUT).build()
 }
 
 #[derive(Debug)]
@@ -119,14 +117,10 @@ pub fn poll_for_token(
                 continue;
             }
             "expired_token" => {
-                return PollResult::Error(
-                    "the device code expired — please retry".to_string(),
-                );
+                return PollResult::Error("the device code expired — please retry".to_string());
             }
             "access_denied" => {
-                return PollResult::Error(
-                    "authorization was denied in the browser".to_string(),
-                );
+                return PollResult::Error("authorization was denied in the browser".to_string());
             }
             other => return PollResult::Error(format!("github returned error: {other}")),
         }

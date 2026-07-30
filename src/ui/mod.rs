@@ -7,6 +7,7 @@ mod deck_list;
 mod deck_view;
 mod device_auth;
 mod review;
+mod stats;
 pub mod theme;
 mod welcome;
 
@@ -60,5 +61,6 @@ pub fn draw(f: &mut Frame, app: &App) {
         Screen::RenameDeckModal { .. } => {
             card_modal::draw_simple_modal(f, "Rename Deck", "New name", &app.input_buffer);
         }
+        Screen::Stats => stats::draw(f, app),
     }
 }

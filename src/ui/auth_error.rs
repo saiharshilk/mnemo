@@ -1,8 +1,8 @@
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
-    Frame,
 };
 
 use super::theme;
@@ -34,10 +34,7 @@ pub fn draw(f: &mut Frame, message: &str) {
         rows[0],
     );
 
-    f.render_widget(
-        Paragraph::new(message).wrap(Wrap { trim: true }),
-        rows[1],
-    );
+    f.render_widget(Paragraph::new(message).wrap(Wrap { trim: true }), rows[1]);
 
     let hint_y = area.y + area.height.saturating_sub(1);
     let hint = Paragraph::new("r retry  ·  esc back").style(theme::hint());

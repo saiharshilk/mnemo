@@ -1,10 +1,10 @@
 use crate::db::DeckSummary;
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::Style,
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph},
-    Frame,
 };
 
 use super::theme;
@@ -32,10 +32,7 @@ pub fn draw(f: &mut Frame, decks: &[DeckSummary], selected: usize, status_hint: 
             .enumerate()
             .map(|(i, summary)| {
                 let due_badge = if summary.due_count > 0 {
-                    Span::styled(
-                        format!(" {:>3} due ", summary.due_count),
-                        theme::accent(),
-                    )
+                    Span::styled(format!(" {:>3} due ", summary.due_count), theme::accent())
                 } else {
                     Span::styled("       ", Style::default())
                 };
@@ -72,6 +69,6 @@ pub fn deck_list_hint(delete_pending: bool) -> String {
     if delete_pending {
         "Press d again to confirm delete  ·  Esc cancel".to_string()
     } else {
-        "↑↓/jk select  Enter open  n new  e rename  d delete  q quit".to_string()
+        "↑↓/jk select  Enter open  n new  e rename  d delete  s stats  q quit".to_string()
     }
 }

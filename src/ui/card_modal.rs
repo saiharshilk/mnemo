@@ -1,7 +1,7 @@
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout},
     widgets::{Block, Borders, Paragraph},
-    Frame,
 };
 
 use super::theme;
@@ -23,13 +23,7 @@ impl CardModalStep {
     }
 }
 
-pub fn draw(
-    f: &mut Frame,
-    title: &str,
-    step: CardModalStep,
-    input: &str,
-    editing: bool,
-) {
+pub fn draw(f: &mut Frame, title: &str, step: CardModalStep, input: &str, editing: bool) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(5), Constraint::Length(1)])
@@ -56,11 +50,8 @@ pub fn draw(
     let para = Paragraph::new(display).block(block);
     f.render_widget(para, chunks[0]);
 
-    let hint = Paragraph::new(format!(
-        "Enter next  ·  Esc cancel  ·  {}",
-        title
-    ))
-    .style(theme::hint());
+    let hint =
+        Paragraph::new(format!("Enter next  ·  Esc cancel  ·  {}", title)).style(theme::hint());
     f.render_widget(hint, chunks[1]);
 }
 

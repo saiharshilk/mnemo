@@ -1,10 +1,10 @@
-use crate::auth::{github, supabase, AuthUpdate, Session};
+use crate::auth::{AuthUpdate, Session, github, supabase};
 use crate::db::{self, CardWithReview, Deck, DeckSummary};
-use crate::events::{map_key, map_key_in_input, Action};
+use crate::events::{Action, map_key, map_key_in_input};
 use crate::fsrs::scheduler::schedule;
 use crate::ui::CardModalStep;
 use anyhow::Result;
-use chrono::Utc;
+use chrono::{NaiveDate, Utc};
 use rs_fsrs::Rating;
 use rusqlite::Connection;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -37,6 +37,22 @@ pub enum Screen {
     RenameDeckModal {
         deck_id: i64,
     },
+    Stats,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum HeatmapView {
+    #[default]
+    Daily,
+    Weekly,
+}
+
+#[derive(Debug, Clone)]
+pub struct StatsState {
+    pub retention: Option<f64>,
+    pub heatmap: Vec<(NaiveDate, i64)>,
+    pub forecast: Vec<(NaiveDate, i64)>,
+    pub view: HeatmapView,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +90,8 @@ pub struct App {
 
     auth_rx: Option<mpsc::Receiver<AuthUpdate>>,
     auth_cancel: Option<std::sync::Arc<AtomicBool>>,
+
+    pub stats_state: Option<StatsState>,
 }
 
 impl App {
@@ -102,6 +120,7 @@ impl App {
             delete_pending_at: None,
             auth_rx: None,
             auth_cancel: None,
+            stats_state: None,
         };
 
         if app.session.is_some() {
@@ -148,9 +167,7 @@ impl App {
                 None
             }
             github::TokenStatus::Inconclusive(e) => {
-                eprintln!(
-                    "auth: session found, network check failed, proceeding anyway: {e}"
-                );
+                eprintln!("auth: session found, network check failed, proceeding anyway: {e}");
                 Some(session)
             }
         };
@@ -201,6 +218,8 @@ impl App {
             },
             Action::Delete => self.handle_delete()?,
             Action::Review => self.handle_start_review()?,
+            Action::Stats => self.handle_stats()?,
+            Action::ToggleView => self.handle_toggle_view(),
             Action::Flip => self.handle_flip(),
             Action::Rate(n) => self.handle_rate(n)?,
             Action::Char(_) | Action::Backspace => {}
@@ -285,7 +304,9 @@ impl App {
         if let Err(e) = session.save() {
             // Disk-write failure must not crash the app. Surface it on the
             // error screen so the user knows the next launch will re-login.
-            self.show_auth_error(format!("login succeeded but could not persist session: {e}"));
+            self.show_auth_error(format!(
+                "login succeeded but could not persist session: {e}"
+            ));
             return;
         }
         self.session = Some(session);
@@ -345,12 +366,8 @@ impl App {
         let device_code = resp.device_code.clone();
         let mut interval = resp.interval;
         thread::spawn(move || {
-            let poll = github::poll_for_token(
-                &client_id,
-                &device_code,
-                &mut interval,
-                &cancel_for_thread,
-            );
+            let poll =
+                github::poll_for_token(&client_id, &device_code, &mut interval, &cancel_for_thread);
             let update = match poll {
                 github::PollResult::Success(token) => match github::fetch_user(&token) {
                     Ok(user) => {
@@ -552,6 +569,34 @@ impl App {
         Ok(())
     }
 
+    fn handle_stats(&mut self) -> Result<()> {
+        if !matches!(self.current_screen(), Screen::DeckList) {
+            return Ok(());
+        }
+        let retention = db::retention_rate_30d(&self.conn)?;
+        let heatmap = db::review_heatmap_90d(&self.conn)?;
+        let forecast = db::forecast_14d(&self.conn)?;
+        self.stats_state = Some(StatsState {
+            retention,
+            heatmap,
+            forecast,
+            view: HeatmapView::Daily,
+        });
+        self.screen_stack.push(Screen::Stats);
+        Ok(())
+    }
+
+    fn handle_toggle_view(&mut self) {
+        if matches!(self.current_screen(), Screen::Stats) {
+            if let Some(stats) = self.stats_state.as_mut() {
+                stats.view = match stats.view {
+                    HeatmapView::Daily => HeatmapView::Weekly,
+                    HeatmapView::Weekly => HeatmapView::Daily,
+                };
+            }
+        }
+    }
+
     fn handle_start_review(&mut self) -> Result<()> {
         if let Screen::DeckView { deck_id } = self.current_screen().clone() {
             let now = Utc::now();
@@ -594,13 +639,7 @@ impl App {
         let (new_state, elapsed_days) =
             schedule(entry.review.as_ref(), entry.card.id, fsrs_rating, now);
         db::upsert_review_state(&self.conn, &new_state)?;
-        db::insert_review_log(
-            &self.conn,
-            entry.card.id,
-            rating as i32,
-            now,
-            elapsed_days,
-        )?;
+        db::insert_review_log(&self.conn, entry.card.id, rating as i32, now, elapsed_days)?;
 
         self.review_index += 1;
         self.review_flipped = false;
