@@ -81,6 +81,23 @@ pub fn list_decks(conn: &Connection, now: DateTime<Utc>) -> Result<Vec<DeckSumma
     Ok(decks)
 }
 
+pub fn list_deck_names(conn: &Connection) -> Result<Vec<(i64, String)>> {
+    let mut stmt = conn.prepare("SELECT id, name FROM decks ORDER BY name COLLATE NOCASE")?;
+    let names = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(names)
+}
+
+pub fn deck_name_exists(conn: &Connection, name: &str) -> Result<bool> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM decks WHERE name = ?1",
+        params![name],
+        |row| row.get(0),
+    )?;
+    Ok(count > 0)
+}
+
 pub fn get_deck(conn: &Connection, deck_id: i64) -> Result<Option<Deck>> {
     conn.query_row(
         "SELECT id, name, description, created_at FROM decks WHERE id = ?1",
@@ -148,6 +165,22 @@ pub fn get_card(conn: &Connection, card_id: i64) -> Result<Option<Card>> {
     .context("failed to fetch card")
 }
 
+pub fn create_card_with_type(
+    conn: &Connection,
+    deck_id: i64,
+    front: &str,
+    back: &str,
+    tags: Option<&str>,
+    note_type: &str,
+) -> Result<i64> {
+    conn.execute(
+        "INSERT INTO cards (deck_id, front, back, tags, note_type, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![deck_id, front, back, tags, note_type, now_iso()],
+    )
+    .context("failed to create card")?;
+    Ok(conn.last_insert_rowid())
+}
+
 pub fn create_card(
     conn: &Connection,
     deck_id: i64,
@@ -155,12 +188,62 @@ pub fn create_card(
     back: &str,
     tags: Option<&str>,
 ) -> Result<i64> {
-    conn.execute(
-        "INSERT INTO cards (deck_id, front, back, tags, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![deck_id, front, back, tags, now_iso()],
-    )
-    .context("failed to create card")?;
-    Ok(conn.last_insert_rowid())
+    create_card_with_type(conn, deck_id, front, back, tags, "basic")
+}
+
+pub fn import_cards(conn: &mut Connection, deck_id: i64, cards: &[ImportedCard]) -> Result<usize> {
+    let tx = conn.transaction().context("failed to begin card import")?;
+    let now = now_iso();
+    let mut inserted = 0;
+    {
+        for card in cards {
+            tx.execute(
+            "INSERT INTO cards (deck_id, front, back, tags, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                deck_id,
+                card.front,
+                card.back,
+                card.tags,
+                now,
+            ],
+        )?;
+            let card_id = tx.last_insert_rowid();
+            tx.execute(
+                "INSERT INTO review_state (card_id, due_date, state) VALUES (?1, ?2, 'new')",
+                params![card_id, now],
+            )?;
+            inserted += 1;
+        }
+    }
+    tx.commit().context("failed to commit card import")?;
+    Ok(inserted)
+}
+
+pub fn create_deck_and_import_cards(
+    conn: &mut Connection,
+    name: &str,
+    cards: &[ImportedCard],
+) -> Result<(i64, usize)> {
+    let tx = conn.transaction().context("failed to begin deck import")?;
+    let now = now_iso();
+    tx.execute(
+        "INSERT INTO decks (name, created_at) VALUES (?1, ?2)",
+        params![name, now],
+    )?;
+    let deck_id = tx.last_insert_rowid();
+    for card in cards {
+        tx.execute(
+            "INSERT INTO cards (deck_id, front, back, tags, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![deck_id, card.front, card.back, card.tags, now],
+        )?;
+        let card_id = tx.last_insert_rowid();
+        tx.execute(
+            "INSERT INTO review_state (card_id, due_date, state) VALUES (?1, ?2, 'new')",
+            params![card_id, now],
+        )?;
+    }
+    tx.commit().context("failed to commit deck import")?;
+    Ok((deck_id, cards.len()))
 }
 
 pub fn update_card(

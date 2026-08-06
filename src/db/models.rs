@@ -1,5 +1,12 @@
 use chrono::{DateTime, Utc};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportedCard {
+    pub front: String,
+    pub back: String,
+    pub tags: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Deck {
     pub id: i64,

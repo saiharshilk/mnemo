@@ -1,4 +1,5 @@
 use crate::auth::{AuthUpdate, Session, github, supabase};
+use crate::csv_import::CsvPreview;
 use crate::db::{self, CardWithReview, Deck, DeckSummary};
 use crate::events::{Action, map_key, map_key_in_input};
 use crate::fsrs::scheduler::schedule;
@@ -7,6 +8,7 @@ use anyhow::Result;
 use chrono::{NaiveDate, Utc};
 use rs_fsrs::Rating;
 use rusqlite::Connection;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::thread;
@@ -38,6 +40,40 @@ pub enum Screen {
         deck_id: i64,
     },
     Stats,
+    ImportCsv,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportStep {
+    FilePath,
+    Preview,
+    DeckChoice,
+    NewDeckName,
+    ExistingDeck,
+    Confirm,
+}
+
+impl ImportStep {
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::FilePath => "File",
+            Self::Preview => "Preview",
+            Self::DeckChoice => "Deck",
+            Self::NewDeckName => "New deck",
+            Self::ExistingDeck => "Deck",
+            Self::Confirm => "Confirm",
+        }
+    }
+
+    pub fn hint(self) -> &'static str {
+        match self {
+            Self::FilePath | Self::NewDeckName => "Enter continue  ·  Esc back",
+            Self::Preview => "Enter choose deck  ·  Esc change path",
+            Self::DeckChoice => "↑↓/jk select  Enter choose  Esc back  q quit",
+            Self::ExistingDeck => "↑↓/jk select  Enter choose  Esc back  q quit",
+            Self::Confirm => "Enter confirm import  ·  Esc cancel  q quit",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -92,6 +128,16 @@ pub struct App {
     auth_cancel: Option<std::sync::Arc<AtomicBool>>,
 
     pub stats_state: Option<StatsState>,
+
+    pub import_step: ImportStep,
+    pub import_preview: Option<CsvPreview>,
+    pub import_decks: Vec<(i64, String)>,
+    pub import_selected: usize,
+    pub import_deck_name: String,
+    pub import_error: Option<String>,
+    pub import_status: Option<String>,
+    import_status_at: Option<Instant>,
+    import_path: Option<PathBuf>,
 }
 
 impl App {
@@ -121,6 +167,15 @@ impl App {
             auth_rx: None,
             auth_cancel: None,
             stats_state: None,
+            import_step: ImportStep::FilePath,
+            import_preview: None,
+            import_decks: Vec::new(),
+            import_selected: 0,
+            import_deck_name: String::new(),
+            import_error: None,
+            import_status: None,
+            import_status_at: None,
+            import_path: None,
         };
 
         if app.session.is_some() {
@@ -219,6 +274,7 @@ impl App {
             Action::Delete => self.handle_delete()?,
             Action::Review => self.handle_start_review()?,
             Action::Stats => self.handle_stats()?,
+            Action::Import => self.start_import()?,
             Action::ToggleView => self.handle_toggle_view(),
             Action::Flip => self.handle_flip(),
             Action::Rate(n) => self.handle_rate(n)?,
@@ -230,7 +286,10 @@ impl App {
     fn is_input_screen(&self) -> bool {
         matches!(
             self.current_screen(),
-            Screen::CardModal { .. } | Screen::NewDeckModal | Screen::RenameDeckModal { .. }
+            Screen::CardModal { .. }
+                | Screen::NewDeckModal
+                | Screen::RenameDeckModal { .. }
+                | Screen::ImportCsv
         )
     }
 
@@ -254,6 +313,9 @@ impl App {
     }
 
     fn handle_input_action(&mut self, action: Action) -> Result<()> {
+        if matches!(self.current_screen(), Screen::ImportCsv) {
+            return self.handle_import_input(action);
+        }
         match action {
             Action::Back => self.pop_screen()?,
             Action::Confirm => self.submit_input()?,
@@ -266,8 +328,46 @@ impl App {
         Ok(())
     }
 
+    fn handle_import_input(&mut self, action: Action) -> Result<()> {
+        match action {
+            Action::Back => self.import_back()?,
+            Action::Confirm => self.import_confirm()?,
+            Action::Char(c) => {
+                if matches!(
+                    self.import_step,
+                    ImportStep::FilePath | ImportStep::NewDeckName
+                ) {
+                    self.input_buffer.push(c);
+                }
+            }
+            Action::Backspace => {
+                if matches!(
+                    self.import_step,
+                    ImportStep::FilePath | ImportStep::NewDeckName
+                ) {
+                    self.input_buffer.pop();
+                }
+            }
+            Action::Up => self.import_move_selection(-1),
+            Action::Down => self.import_move_selection(1),
+            Action::Quit => self.should_quit = true,
+            _ => {}
+        }
+        Ok(())
+    }
+
     pub fn process_event(&mut self, event: crossterm::event::KeyEvent) -> Result<()> {
-        let action = if self.is_input_screen() {
+        if self.import_status.is_some() && matches!(self.current_screen(), Screen::DeckList) {
+            self.import_status = None;
+            self.import_status_at = None;
+        }
+        let action = if matches!(self.current_screen(), Screen::ImportCsv)
+            && !matches!(
+                self.import_step,
+                ImportStep::FilePath | ImportStep::NewDeckName
+            ) {
+            map_key(event)
+        } else if self.is_input_screen() {
             map_key_in_input(event)
         } else {
             map_key(event)
@@ -281,6 +381,14 @@ impl App {
     /// Drains any pending auth worker messages. Called once per UI tick after key
     /// processing. Failure modes are converted to AuthError so the user can retry.
     pub fn poll_auth_updates(&mut self) -> Result<()> {
+        if self
+            .import_status_at
+            .is_some_and(|at| at.elapsed() >= Duration::from_secs(2))
+        {
+            self.import_status = None;
+            self.import_status_at = None;
+        }
+
         let Some(rx) = self.auth_rx.as_ref() else {
             return Ok(());
         };
@@ -440,6 +548,18 @@ impl App {
         self.auth_rx = None;
     }
 
+    fn import_move_selection(&mut self, delta: i32) {
+        let len = match self.import_step {
+            ImportStep::DeckChoice => 2,
+            ImportStep::ExistingDeck => self.import_decks.len(),
+            _ => 0,
+        };
+        if len > 0 {
+            self.import_selected =
+                (self.import_selected as i32 + delta).rem_euclid(len as i32) as usize;
+        }
+    }
+
     fn move_selection(&mut self, delta: i32) {
         match self.current_screen() {
             Screen::DeckList if !self.decks.is_empty() => {
@@ -465,6 +585,167 @@ impl App {
             }
             Screen::DeckView { .. } => self.handle_edit()?,
             _ => {}
+        }
+        Ok(())
+    }
+
+    fn start_import(&mut self) -> Result<()> {
+        if !matches!(self.current_screen(), Screen::DeckList) {
+            return Ok(());
+        }
+        self.input_buffer.clear();
+        self.import_error = None;
+        self.import_status = None;
+        self.import_status_at = None;
+        self.import_preview = None;
+        self.import_decks.clear();
+        self.import_selected = 0;
+        self.import_deck_name.clear();
+        self.import_path = None;
+        self.import_step = ImportStep::FilePath;
+        self.screen_stack.push(Screen::ImportCsv);
+        Ok(())
+    }
+
+    fn import_confirm(&mut self) -> Result<()> {
+        match self.import_step {
+            ImportStep::FilePath => {
+                let raw_path = self.input_buffer.trim();
+                let path = expand_path(raw_path);
+                if !path.is_file() {
+                    self.import_error = Some("file not found — try again".to_string());
+                    return Ok(());
+                }
+                match CsvPreview::from_path(&path) {
+                    Ok(preview) => {
+                        self.import_path = Some(path);
+                        self.import_preview = Some(preview);
+                        self.import_error = None;
+                        self.input_buffer.clear();
+                        self.import_step = ImportStep::Preview;
+                    }
+                    Err(error) => {
+                        let message = error.to_string();
+                        self.import_error = Some(if message.contains("csv must have") {
+                            "csv must have 'front' and 'back' columns".to_string()
+                        } else {
+                            message
+                        });
+                    }
+                }
+            }
+            ImportStep::Preview => {
+                self.import_decks = db::list_deck_names(&self.conn)?;
+                self.import_selected = 0;
+                self.import_step = ImportStep::DeckChoice;
+            }
+            ImportStep::DeckChoice => {
+                if self.import_selected == 0 || self.import_decks.is_empty() {
+                    self.input_buffer.clear();
+                    self.import_error = None;
+                    self.import_step = ImportStep::NewDeckName;
+                } else {
+                    self.import_selected = 0;
+                    self.import_step = ImportStep::ExistingDeck;
+                }
+            }
+            ImportStep::NewDeckName => {
+                let name = self.input_buffer.trim();
+                if name.is_empty() {
+                    self.import_error = Some("deck name cannot be empty".to_string());
+                } else if db::deck_name_exists(&self.conn, name)? {
+                    self.import_error = Some("deck name already exists — try again".to_string());
+                } else {
+                    self.import_deck_name = name.to_string();
+                    self.import_error = None;
+                    self.import_step = ImportStep::Confirm;
+                }
+            }
+            ImportStep::ExistingDeck => {
+                if let Some((_, name)) = self.import_decks.get(self.import_selected) {
+                    self.import_deck_name = name.clone();
+                    self.import_step = ImportStep::Confirm;
+                }
+            }
+            ImportStep::Confirm => {
+                let path = self.import_path.as_ref().expect("path before confirm");
+                let final_preview = match CsvPreview::from_path(path) {
+                    Ok(preview) => preview,
+                    Err(error) => {
+                        self.import_error = Some(format!("could not reread csv file: {error}"));
+                        return Ok(());
+                    }
+                };
+                self.import_preview = Some(final_preview.clone());
+                let (imported, skipped) = if let Some((deck_id, _)) = self
+                    .import_decks
+                    .iter()
+                    .find(|(_, name)| name == &self.import_deck_name)
+                {
+                    (
+                        db::import_cards(&mut self.conn, *deck_id, &final_preview.cards)?,
+                        final_preview.skipped_rows,
+                    )
+                } else {
+                    let (deck_id, imported) = db::create_deck_and_import_cards(
+                        &mut self.conn,
+                        &self.import_deck_name,
+                        &final_preview.cards,
+                    )?;
+                    let _ = deck_id;
+                    (imported, final_preview.skipped_rows)
+                };
+                let message = if skipped == 0 {
+                    format!("imported {imported} cards into '{}'", self.import_deck_name)
+                } else {
+                    format!(
+                        "imported {imported} cards into '{}' ({skipped} rows skipped — missing front or back)",
+                        self.import_deck_name
+                    )
+                };
+                self.screen_stack.pop();
+                self.input_buffer.clear();
+                self.import_preview = None;
+                self.import_error = None;
+                self.import_status = Some(message);
+                self.import_status_at = Some(Instant::now());
+                self.refresh_decks()?;
+            }
+        }
+        Ok(())
+    }
+
+    fn import_back(&mut self) -> Result<()> {
+        match self.import_step {
+            ImportStep::FilePath => self.pop_screen()?,
+            ImportStep::Preview => {
+                self.import_step = ImportStep::FilePath;
+                self.input_buffer = self
+                    .import_path
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_default();
+                self.import_error = None;
+            }
+            ImportStep::DeckChoice => {
+                self.import_step = ImportStep::Preview;
+                self.import_selected = 0;
+            }
+            ImportStep::NewDeckName => {
+                self.import_step = ImportStep::DeckChoice;
+                self.import_selected = 0;
+                self.input_buffer.clear();
+                self.import_error = None;
+            }
+            ImportStep::ExistingDeck => {
+                self.import_step = ImportStep::DeckChoice;
+                self.import_selected = 1;
+            }
+            ImportStep::Confirm => {
+                self.import_step = ImportStep::DeckChoice;
+                self.import_selected = 0;
+                self.import_deck_name.clear();
+            }
         }
         Ok(())
     }
@@ -768,5 +1049,17 @@ impl App {
         self.current_deck = db::get_deck(&self.conn, deck_id)?;
         self.cards = db::list_cards(&self.conn, deck_id)?;
         Ok(())
+    }
+}
+
+fn expand_path(raw: &str) -> PathBuf {
+    if raw == "~" {
+        dirs::home_dir().unwrap_or_else(|| PathBuf::from(raw))
+    } else if let Some(rest) = raw.strip_prefix("~/") {
+        dirs::home_dir()
+            .map(|home| home.join(rest))
+            .unwrap_or_else(|| PathBuf::from(raw))
+    } else {
+        PathBuf::from(raw)
     }
 }

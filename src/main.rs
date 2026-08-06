@@ -1,5 +1,6 @@
 mod app;
 mod auth;
+mod csv_import;
 mod db;
 mod events;
 mod fsrs;

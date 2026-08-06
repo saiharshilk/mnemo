@@ -6,6 +6,7 @@ mod card_modal;
 mod deck_list;
 mod deck_view;
 mod device_auth;
+mod import_csv;
 mod review;
 mod stats;
 pub mod theme;
@@ -26,6 +27,7 @@ pub fn draw(f: &mut Frame, app: &App) {
             &app.decks,
             app.deck_list_selected,
             &deck_list::deck_list_hint(app.delete_pending()),
+            app.import_status.as_deref(),
         ),
         Screen::DeckView { .. } => {
             if let Some(deck) = &app.current_deck {
@@ -62,5 +64,15 @@ pub fn draw(f: &mut Frame, app: &App) {
             card_modal::draw_simple_modal(f, "Rename Deck", "New name", &app.input_buffer);
         }
         Screen::Stats => stats::draw(f, app),
+        Screen::ImportCsv => import_csv::draw(
+            f,
+            app.import_step,
+            &app.input_buffer,
+            app.import_error.as_deref(),
+            app.import_preview.as_ref(),
+            &app.import_decks,
+            app.import_selected,
+            &app.import_deck_name,
+        ),
     }
 }

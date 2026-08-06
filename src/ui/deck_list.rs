@@ -9,7 +9,13 @@ use ratatui::{
 
 use super::theme;
 
-pub fn draw(f: &mut Frame, decks: &[DeckSummary], selected: usize, status_hint: &str) {
+pub fn draw(
+    f: &mut Frame,
+    decks: &[DeckSummary],
+    selected: usize,
+    status_hint: &str,
+    status: Option<&str>,
+) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(3), Constraint::Length(1)])
@@ -57,7 +63,7 @@ pub fn draw(f: &mut Frame, decks: &[DeckSummary], selected: usize, status_hint: 
         f.render_widget(list, chunks[0]);
     }
 
-    draw_status_bar(f, chunks[1], status_hint);
+    draw_status_bar(f, chunks[1], status.unwrap_or(status_hint));
 }
 
 fn draw_status_bar(f: &mut Frame, area: Rect, hint: &str) {
@@ -69,6 +75,7 @@ pub fn deck_list_hint(delete_pending: bool) -> String {
     if delete_pending {
         "Press d again to confirm delete  ·  Esc cancel".to_string()
     } else {
-        "↑↓/jk select  Enter open  n new  e rename  d delete  s stats  q quit".to_string()
+        "↑↓/jk select  Enter open  n new  e rename  d delete  i import csv  s stats  q quit"
+            .to_string()
     }
 }
