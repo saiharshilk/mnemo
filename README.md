@@ -20,6 +20,21 @@ it's easy to let all of that quietly disappear between tabs and terminals 😭 m
 - cloze deletion cards, tags, and lightweight markdown (`**bold**`, `*italic*`, `` `code` ``)
 - import/export decks as CSV, right from the command line
 
+### CSV import
+
+mnemo has two ways to import CSV decks. use `mnemo import <path>` for scripting or bulk imports, or press `i` from the deck list to import without leaving the TUI. the in-app flow previews the first three rows and total card count, lets you create a new deck or choose an existing one, and asks for confirmation before importing.
+
+CSV files need a header row with `front`, `back`, and optionally `tags` (column names are case-insensitive). tags are comma-separated within a single quoted CSV field when multiple tags are needed:
+
+```csv
+front,back,tags
+Ab-,away,prefixes
+Sub-,"below, secondary, or part of",prefixes
+```
+
+Rows missing a front or back value are skipped and counted in the confirmation message rather than causing the import to fail.
+
+
 ## Features: V2 (aka stuff i want)
 
 - full deck/card sync across devices, not just identity ✌️
@@ -115,7 +130,7 @@ mnemo calls `POST {SUPABASE_URL}/rest/v1/users` with `resolution=merge-duplicate
 | welcome | `enter` log in with github · `q` quit |
 | device auth | `enter` open browser to verification URL · `esc` cancel |
 | auth error | `r` retry · `esc` back to welcome |
-| deck list | `enter` open · `n` new deck · `e` rename · `d` delete (twice to confirm) · `s` stats · `esc`/`q` quit |
+| deck list | `enter` open · `n` new deck · `e` rename · `d` delete (twice to confirm) · `s` stats · `i` import csv · `esc`/`q` quit |
 | inside a deck | `n` new card · `enter`/`e` edit · `d` delete (twice) · `r` review · `t` filter by tag · `esc` back |
 | new / edit card | type front, `enter`, type back, `enter`, type tags (optional), `enter` to save · `esc` cancels |
 | review | `space`/`enter` flip · then rate: `1` again · `2` hard · `3` good · `4` easy |
