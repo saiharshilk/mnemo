@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Screen {
@@ -30,6 +30,7 @@ pub enum Screen {
     },
     Review {
         deck_id: i64,
+        cram: bool,
     },
     CardModal {
         deck_id: i64,
@@ -143,6 +144,8 @@ pub struct App {
     pub search_query: String,
     pub search_results: Vec<(crate::db::Card, String)>,
     pub search_selected: usize,
+
+    pub deck_view_message: Option<String>,
 }
 
 impl App {
@@ -184,6 +187,7 @@ impl App {
             search_query: String::new(),
             search_results: Vec::new(),
             search_selected: 0,
+            deck_view_message: None,
         };
 
         if app.session.is_some() {
@@ -280,7 +284,8 @@ impl App {
                 _ => {}
             },
             Action::Delete => self.handle_delete()?,
-            Action::Review => self.handle_start_review()?,
+            Action::Review => self.handle_start_review(false)?,
+            Action::Cram => self.handle_start_review(true)?,
             Action::Stats => self.handle_stats()?,
             Action::Import => self.start_import()?,
             Action::Search => self.start_search()?,
@@ -392,6 +397,11 @@ impl App {
         if self.import_status.is_some() && matches!(self.current_screen(), Screen::DeckList) {
             self.import_status = None;
             self.import_status_at = None;
+        }
+        if self.deck_view_message.is_some()
+            && matches!(self.current_screen(), Screen::DeckView { .. })
+        {
+            self.deck_view_message = None;
         }
         let action = if matches!(self.current_screen(), Screen::ImportCsv)
             && !matches!(
@@ -956,14 +966,28 @@ impl App {
         }
     }
 
-    fn handle_start_review(&mut self) -> Result<()> {
+    fn handle_start_review(&mut self, cram: bool) -> Result<()> {
         if let Screen::DeckView { deck_id } = self.current_screen().clone() {
-            let now = Utc::now();
-            self.review_queue = db::get_due_cards(&self.conn, deck_id, now)?;
+            self.deck_view_message = None;
+            let mut queue = if cram {
+                db::list_cards(&self.conn, deck_id)?
+            } else {
+                db::get_due_cards(&self.conn, deck_id, Utc::now())?
+            };
+
+            if cram {
+                if queue.is_empty() {
+                    self.deck_view_message = Some("no cards in this deck yet".to_string());
+                    return Ok(());
+                }
+                shuffle_cards(&mut queue);
+            }
+
+            self.review_queue = queue;
             self.review_index = 0;
             self.review_flipped = false;
             self.review_message = None;
-            self.screen_stack.push(Screen::Review { deck_id });
+            self.screen_stack.push(Screen::Review { deck_id, cram });
         }
         Ok(())
     }
@@ -976,7 +1000,7 @@ impl App {
     }
 
     fn handle_rate(&mut self, rating: u8) -> Result<()> {
-        let Screen::Review { deck_id } = self.current_screen().clone() else {
+        let Screen::Review { deck_id, cram } = self.current_screen().clone() else {
             return Ok(());
         };
         if !self.review_flipped {
@@ -994,18 +1018,28 @@ impl App {
             _ => return Ok(()),
         };
 
-        let now = Utc::now();
-        let (new_state, elapsed_days) =
-            schedule(entry.review.as_ref(), entry.card.id, fsrs_rating, now);
-        db::upsert_review_state(&self.conn, &new_state)?;
-        db::insert_review_log(&self.conn, entry.card.id, rating as i32, now, elapsed_days)?;
+        persist_review_rating(
+            &self.conn,
+            entry.review.as_ref(),
+            entry.card.id,
+            fsrs_rating,
+            rating,
+            cram,
+        )?;
 
         self.review_index += 1;
         self.review_flipped = false;
 
         if self.review_index >= self.review_queue.len() {
-            self.refresh_deck_view(deck_id)?;
-            self.refresh_decks()?;
+            if cram {
+                self.deck_view_message = Some(format!(
+                    "cram session complete — {} cards reviewed",
+                    self.review_queue.len()
+                ));
+            } else {
+                self.refresh_deck_view(deck_id)?;
+                self.refresh_decks()?;
+            }
             self.screen_stack.pop();
             self.review_flipped = false;
             self.review_message = None;
@@ -1132,6 +1166,40 @@ impl App {
     }
 }
 
+fn persist_review_rating(
+    conn: &Connection,
+    review: Option<&db::ReviewState>,
+    card_id: i64,
+    fsrs_rating: Rating,
+    rating: u8,
+    cram: bool,
+) -> Result<()> {
+    if cram {
+        return Ok(());
+    }
+
+    let now = Utc::now();
+    let (new_state, elapsed_days) = schedule(review, card_id, fsrs_rating, now);
+    db::upsert_review_state(conn, &new_state)?;
+    db::insert_review_log(conn, card_id, rating as i32, now, elapsed_days)?;
+    Ok(())
+}
+
+fn shuffle_cards(cards: &mut [CardWithReview]) {
+    let mut seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos() as u64)
+        .unwrap_or(0);
+
+    for index in (1..cards.len()).rev() {
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        let swap_index = (seed % (index as u64 + 1)) as usize;
+        cards.swap(index, swap_index);
+    }
+}
+
 fn expand_path(raw: &str) -> PathBuf {
     if raw == "~" {
         dirs::home_dir().unwrap_or_else(|| PathBuf::from(raw))
@@ -1141,5 +1209,76 @@ fn expand_path(raw: &str) -> PathBuf {
             .unwrap_or_else(|| PathBuf::from(raw))
     } else {
         PathBuf::from(raw)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn review_conn() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE review_state (
+                card_id INTEGER PRIMARY KEY,
+                stability REAL NOT NULL DEFAULT 0,
+                difficulty REAL NOT NULL DEFAULT 0,
+                due_date TEXT NOT NULL,
+                last_review TEXT,
+                reps INTEGER NOT NULL DEFAULT 0,
+                lapses INTEGER NOT NULL DEFAULT 0,
+                state TEXT NOT NULL DEFAULT 'new'
+            );
+            CREATE TABLE review_log (
+                id INTEGER PRIMARY KEY,
+                card_id INTEGER NOT NULL,
+                rating INTEGER NOT NULL,
+                reviewed_at TEXT NOT NULL,
+                elapsed_days REAL NOT NULL
+            );",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn cram_rating_does_not_write_review_state_or_log() {
+        let conn = review_conn();
+
+        persist_review_rating(&conn, None, 1, Rating::Good, 3, true).unwrap();
+
+        let state_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM review_state", [], |row| row.get(0))
+            .unwrap();
+        let log_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM review_log", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(state_count, 0);
+        assert_eq!(log_count, 0);
+    }
+
+    #[test]
+    fn regular_rating_writes_review_state_and_log() {
+        let conn = review_conn();
+
+        persist_review_rating(&conn, None, 1, Rating::Good, 3, false).unwrap();
+
+        let state_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM review_state", [], |row| row.get(0))
+            .unwrap();
+        let log_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM review_log", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(state_count, 1);
+        assert_eq!(log_count, 1);
+
+        let persisted_card_id: i64 = conn
+            .query_row("SELECT card_id FROM review_state", [], |row| row.get(0))
+            .unwrap();
+        let persisted_rating: i64 = conn
+            .query_row("SELECT rating FROM review_log", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(persisted_card_id, 1);
+        assert_eq!(persisted_rating, 3);
     }
 }

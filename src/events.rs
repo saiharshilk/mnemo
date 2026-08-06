@@ -11,6 +11,7 @@ pub enum Action {
     Edit,
     Delete,
     Review,
+    Cram,
     Stats,
     Import,
     Search,
@@ -39,6 +40,7 @@ pub fn map_key(event: KeyEvent) -> Option<Action> {
         KeyCode::Char('e') => Some(Action::Edit),
         KeyCode::Char('d') => Some(Action::Delete),
         KeyCode::Char('r') => Some(Action::Review),
+        KeyCode::Char('c') => Some(Action::Cram),
         // 's' opens the Stats screen from DeckList and is ignored elsewhere.
         KeyCode::Char('s') => Some(Action::Stats),
         KeyCode::Char('i') => Some(Action::Import),

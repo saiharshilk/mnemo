@@ -32,13 +32,11 @@ pub fn draw(f: &mut Frame, app: &App) {
         ),
         Screen::DeckView { .. } => {
             if let Some(deck) = &app.current_deck {
-                deck_view::draw(
-                    f,
-                    deck,
-                    &app.cards,
-                    app.deck_view_selected,
-                    &deck_view::deck_view_hint(app.delete_pending()),
-                );
+                let hint = app
+                    .deck_view_message
+                    .clone()
+                    .unwrap_or_else(|| deck_view::deck_view_hint(app.delete_pending()));
+                deck_view::draw(f, deck, &app.cards, app.deck_view_selected, &hint);
             }
         }
         Screen::Review { .. } => review::draw(
@@ -47,6 +45,7 @@ pub fn draw(f: &mut Frame, app: &App) {
             app.review_flipped,
             app.review_queue.len().saturating_sub(app.review_index),
             app.review_message.as_deref(),
+            matches!(app.current_screen(), Screen::Review { cram: true, .. }),
         ),
         Screen::CardModal { editing, .. } => card_modal::draw(
             f,

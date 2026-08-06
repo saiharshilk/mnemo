@@ -16,6 +16,7 @@ pub fn draw(
     flipped: bool,
     queue_remaining: usize,
     message: Option<&str>,
+    cram: bool,
 ) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -27,13 +28,15 @@ pub fn draw(
         ])
         .split(f.area());
 
+    let review_title = if cram { " Review [cram] " } else { " Review " };
+
     if let Some(msg) = message {
         let msg_para = Paragraph::new(msg)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .border_style(theme::border())
-                    .title(" Review ")
+                    .title(review_title)
                     .title_style(theme::title()),
             )
             .alignment(Alignment::Center)
@@ -45,12 +48,17 @@ pub fn draw(
     }
 
     if current.is_none() {
-        let empty = Paragraph::new("All caught up — nothing due")
+        let empty_message = if cram {
+            "cram session complete"
+        } else {
+            "All caught up — nothing due"
+        };
+        let empty = Paragraph::new(empty_message)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
                     .border_style(theme::border())
-                    .title(" Review ")
+                    .title(review_title)
                     .title_style(theme::title()),
             )
             .alignment(Alignment::Center)
@@ -62,9 +70,13 @@ pub fn draw(
     }
 
     let entry = current.unwrap();
-    let header = Paragraph::new(format!("Review  ·  {queue_remaining} remaining"))
-        .style(theme::dim())
-        .alignment(Alignment::Center);
+    let header = Paragraph::new(if cram {
+        format!("Review [cram]  ·  {queue_remaining} remaining")
+    } else {
+        format!("Review  ·  {queue_remaining} remaining")
+    })
+    .style(theme::dim())
+    .alignment(Alignment::Center);
     f.render_widget(header, chunks[0]);
 
     let content = if flipped {

@@ -82,6 +82,7 @@ pub fn deck_view_hint(delete_pending: bool) -> String {
     if delete_pending {
         "Press d again to confirm delete  ·  Esc cancel".to_string()
     } else {
-        "↑↓/jk select  Enter/e edit  n new  d delete  r review  Esc back  q quit".to_string()
+        "↑↓/jk select  Enter/e edit  n new  d delete  r review  c cram  Esc back  q quit"
+            .to_string()
     }
 }
