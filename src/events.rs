@@ -13,6 +13,7 @@ pub enum Action {
     Review,
     Stats,
     Import,
+    Search,
     ToggleView,
     Flip,
     Rate(u8),
@@ -41,6 +42,7 @@ pub fn map_key(event: KeyEvent) -> Option<Action> {
         // 's' opens the Stats screen from DeckList and is ignored elsewhere.
         KeyCode::Char('s') => Some(Action::Stats),
         KeyCode::Char('i') => Some(Action::Import),
+        KeyCode::Char('/') => Some(Action::Search),
         // 'v' toggles the heatmap view on the Stats screen.
         KeyCode::Char('v') => Some(Action::ToggleView),
         KeyCode::Char(' ') => Some(Action::Flip),

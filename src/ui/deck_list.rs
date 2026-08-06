@@ -75,7 +75,7 @@ pub fn deck_list_hint(delete_pending: bool) -> String {
     if delete_pending {
         "Press d again to confirm delete  ·  Esc cancel".to_string()
     } else {
-        "↑↓/jk select  Enter open  n new  e rename  d delete  i import csv  s stats  q quit"
+        "↑↓/jk select  Enter open  n new  e rename  d delete  i import csv  / search  s stats  q quit"
             .to_string()
     }
 }

@@ -8,6 +8,7 @@ mod deck_view;
 mod device_auth;
 mod import_csv;
 mod review;
+mod search;
 mod stats;
 pub mod theme;
 mod welcome;
@@ -64,6 +65,12 @@ pub fn draw(f: &mut Frame, app: &App) {
             card_modal::draw_simple_modal(f, "Rename Deck", "New name", &app.input_buffer);
         }
         Screen::Stats => stats::draw(f, app),
+        Screen::Search => search::draw(
+            f,
+            &app.search_query,
+            &app.search_results,
+            app.search_selected,
+        ),
         Screen::ImportCsv => import_csv::draw(
             f,
             app.import_step,

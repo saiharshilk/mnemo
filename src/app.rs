@@ -41,6 +41,7 @@ pub enum Screen {
     },
     Stats,
     ImportCsv,
+    Search,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,6 +139,10 @@ pub struct App {
     pub import_status: Option<String>,
     import_status_at: Option<Instant>,
     import_path: Option<PathBuf>,
+
+    pub search_query: String,
+    pub search_results: Vec<(crate::db::Card, String)>,
+    pub search_selected: usize,
 }
 
 impl App {
@@ -176,6 +181,9 @@ impl App {
             import_status: None,
             import_status_at: None,
             import_path: None,
+            search_query: String::new(),
+            search_results: Vec::new(),
+            search_selected: 0,
         };
 
         if app.session.is_some() {
@@ -275,6 +283,7 @@ impl App {
             Action::Review => self.handle_start_review()?,
             Action::Stats => self.handle_stats()?,
             Action::Import => self.start_import()?,
+            Action::Search => self.start_search()?,
             Action::ToggleView => self.handle_toggle_view(),
             Action::Flip => self.handle_flip(),
             Action::Rate(n) => self.handle_rate(n)?,
@@ -290,6 +299,7 @@ impl App {
                 | Screen::NewDeckModal
                 | Screen::RenameDeckModal { .. }
                 | Screen::ImportCsv
+                | Screen::Search
         )
     }
 
@@ -316,6 +326,9 @@ impl App {
         if matches!(self.current_screen(), Screen::ImportCsv) {
             return self.handle_import_input(action);
         }
+        if matches!(self.current_screen(), Screen::Search) {
+            return self.handle_search_input(action);
+        }
         match action {
             Action::Back => self.pop_screen()?,
             Action::Confirm => self.submit_input()?,
@@ -323,6 +336,25 @@ impl App {
             Action::Backspace => {
                 self.input_buffer.pop();
             }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn handle_search_input(&mut self, action: Action) -> Result<()> {
+        match action {
+            Action::Back => self.pop_screen()?,
+            Action::Confirm => self.open_search_result()?,
+            Action::Char(c) => {
+                self.search_query.push(c);
+                self.refresh_search()?;
+            }
+            Action::Backspace => {
+                self.search_query.pop();
+                self.refresh_search()?;
+            }
+            Action::Up => self.move_search_selection(-1),
+            Action::Down => self.move_search_selection(1),
             _ => {}
         }
         Ok(())
@@ -546,6 +578,52 @@ impl App {
             cancel.store(true, Ordering::Relaxed);
         }
         self.auth_rx = None;
+    }
+
+    fn start_search(&mut self) -> Result<()> {
+        if !matches!(self.current_screen(), Screen::DeckList) {
+            return Ok(());
+        }
+        self.search_query.clear();
+        self.search_selected = 0;
+        self.refresh_search()?;
+        self.screen_stack.push(Screen::Search);
+        Ok(())
+    }
+
+    fn refresh_search(&mut self) -> Result<()> {
+        self.search_results = db::search_cards(&self.conn, &self.search_query)?;
+        if self.search_results.is_empty() {
+            self.search_selected = 0;
+        } else if self.search_selected >= self.search_results.len() {
+            self.search_selected = self.search_results.len() - 1;
+        }
+        Ok(())
+    }
+
+    fn move_search_selection(&mut self, delta: i32) {
+        if !self.search_results.is_empty() {
+            let len = self.search_results.len();
+            self.search_selected =
+                (self.search_selected as i32 + delta).rem_euclid(len as i32) as usize;
+        }
+    }
+
+    fn open_search_result(&mut self) -> Result<()> {
+        let Some((card, _deck_name)) = self.search_results.get(self.search_selected).cloned()
+        else {
+            return Ok(());
+        };
+        self.current_deck = db::get_deck(&self.conn, card.deck_id)?;
+        self.card_draft_front = card.front.clone();
+        self.card_draft_back = card.back.clone();
+        self.input_buffer = card.front;
+        self.card_modal_step = CardModalStep::Front;
+        self.screen_stack.push(Screen::CardModal {
+            deck_id: card.deck_id,
+            editing: Some(card.id),
+        });
+        Ok(())
     }
 
     fn import_move_selection(&mut self, delta: i32) {
@@ -1028,8 +1106,10 @@ impl App {
             self.input_buffer.clear();
             self.clear_delete_pending();
 
-            if matches!(self.current_screen(), Screen::DeckList) {
-                self.refresh_decks()?;
+            match self.current_screen() {
+                Screen::DeckList => self.refresh_decks()?,
+                Screen::Search => self.refresh_search()?,
+                _ => {}
             }
         }
         Ok(())

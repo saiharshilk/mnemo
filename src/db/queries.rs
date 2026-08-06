@@ -132,6 +132,22 @@ pub fn delete_deck(conn: &Connection, deck_id: i64) -> Result<()> {
     Ok(())
 }
 
+pub fn search_cards(conn: &Connection, query: &str) -> Result<Vec<(Card, String)>> {
+    let pattern = format!("%{}%", query.to_lowercase());
+    let mut stmt = conn.prepare(
+        "SELECT c.id, c.deck_id, c.front, c.back, c.tags, c.note_type, c.created_at,
+                d.name
+         FROM cards c
+         JOIN decks d ON d.id = c.deck_id
+         WHERE LOWER(c.front) LIKE ?1 OR LOWER(c.back) LIKE ?1
+         ORDER BY d.name COLLATE NOCASE, c.id",
+    )?;
+    let cards = stmt
+        .query_map(params![pattern], |row| Ok((row_to_card(row)?, row.get(7)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(cards)
+}
+
 pub fn list_cards(conn: &Connection, deck_id: i64) -> Result<Vec<CardWithReview>> {
     let mut stmt = conn.prepare(
         "SELECT c.id, c.deck_id, c.front, c.back, c.tags, c.note_type, c.created_at,
@@ -421,6 +437,35 @@ mod tests {
 
     fn iso(days_ago: i64) -> DateTime<Utc> {
         Utc::now() - Duration::days(days_ago)
+    }
+
+    #[test]
+    fn test_search_cards_matches_front_and_back_case_insensitively() {
+        let conn = in_memory_conn();
+        let spanish = create_deck(&conn, "Spanish").unwrap();
+        let science = create_deck(&conn, "Science").unwrap();
+        create_card(&conn, spanish, "Ab-", "away", None).unwrap();
+        create_card(&conn, science, "gravity", "fuerza", None).unwrap();
+        create_card(&conn, science, "unrelated", "other", None).unwrap();
+
+        let front_matches = search_cards(&conn, "AB-").unwrap();
+        assert_eq!(front_matches.len(), 1);
+        assert_eq!(front_matches[0].0.front, "Ab-");
+        assert_eq!(front_matches[0].1, "Spanish");
+
+        let back_matches = search_cards(&conn, "FUERZA").unwrap();
+        assert_eq!(back_matches.len(), 1);
+        assert_eq!(back_matches[0].0.front, "gravity");
+    }
+
+    #[test]
+    fn test_search_cards_empty_query_returns_all_cards() {
+        let conn = in_memory_conn();
+        let deck_id = create_deck(&conn, "Deck").unwrap();
+        create_card(&conn, deck_id, "one", "first", None).unwrap();
+        create_card(&conn, deck_id, "two", "second", None).unwrap();
+
+        assert_eq!(search_cards(&conn, "").unwrap().len(), 2);
     }
 
     #[test]
