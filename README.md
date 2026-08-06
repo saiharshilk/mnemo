@@ -19,6 +19,8 @@ it's easy to let all of that quietly disappear between tabs and terminals 😭 m
 - cloud-synced identity via GitHub + Supabase — sign in once, stay signed in
 - cloze deletion cards, tags, and lightweight markdown (`**bold**`, `*italic*`, `` `code` ``)
 - import/export decks as CSV, right from the command line
+- global search across every deck — no need to remember which card lives where
+- cram mode — review every card in a deck at once, ignoring due dates, without touching the FSRS schedule
 
 ### CSV import
 
@@ -34,6 +36,13 @@ Sub-,"below, secondary, or part of",prefixes
 
 Rows missing a front or back value are skipped and counted in the confirmation message rather than causing the import to fail.
 
+### Global search
+
+press `/` from the deck list to open a search screen — typing filters live, across every deck, matching both front and back text case-insensitively, with each result showing the card front plus its parent deck name. press enter on a result to jump straight to that card's deck with the card already selected; esc cancels back to the deck list. an empty query shows a placeholder prompt, and a query with no matches tells you instead of leaving you staring at a blank screen.
+
+### Cram mode
+
+press `c` from inside a deck to start a cram session — a review run that covers every card in the deck regardless of due date, shuffled randomly, and without touching the deck's real FSRS data. a `[cram]` indicator makes it clear ratings aren't being written to the card's schedule, and when the shuffled queue is exhausted you'll see a "cram session complete — N cards reviewed" message before being returned to the deck view.
 
 ## Features: V2 (aka stuff i want)
 
@@ -130,8 +139,8 @@ mnemo calls `POST {SUPABASE_URL}/rest/v1/users` with `resolution=merge-duplicate
 | welcome | `enter` log in with github · `q` quit |
 | device auth | `enter` open browser to verification URL · `esc` cancel |
 | auth error | `r` retry · `esc` back to welcome |
-| deck list | `enter` open · `n` new deck · `e` rename · `d` delete (twice to confirm) · `s` stats · `i` import csv · `esc`/`q` quit |
-| inside a deck | `n` new card · `enter`/`e` edit · `d` delete (twice) · `r` review · `t` filter by tag · `esc` back |
+| deck list | `enter` open · `n` new deck · `e` rename · `d` delete (twice to confirm) · `s` stats · `i` import csv · `/` search · `esc`/`q` quit |
+| inside a deck | `n` new card · `enter`/`e` edit · `d` delete (twice) · `r` review · `c` cram · `t` filter by tag · `esc` back |
 | new / edit card | type front, `enter`, type back, `enter`, type tags (optional), `enter` to save · `esc` cancels |
 | review | `space`/`enter` flip · then rate: `1` again · `2` hard · `3` good · `4` easy |
 
