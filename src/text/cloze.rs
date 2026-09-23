@@ -6,17 +6,15 @@ const CLOZE_HIGHLIGHT: Color = Color::Rgb(180, 140, 80);
 
 /// Returns true if text contains Anki-style cloze deletion syntax.
 pub fn is_cloze(text: &str) -> bool {
-    text.as_bytes()
-        .windows(4)
-        .any(|w| w == b"{{c" && text.contains("::"))
+    text.match_indices("{{c").any(|(start, _)| {
+        text[start + 3..]
+            .find("::")
+            .is_some_and(|separator| separator > 0)
+    })
 }
 
 pub fn detect_note_type(front: &str) -> &'static str {
-    if is_cloze(front) {
-        "cloze"
-    } else {
-        "basic"
-    }
+    if is_cloze(front) { "cloze" } else { "basic" }
 }
 
 enum Segment {
@@ -69,12 +67,10 @@ pub fn revealed_lines(text: &str) -> Vec<Line> {
     for seg in parse_segments(text) {
         match seg {
             Segment::Text(t) => spans.extend(markdown_spans(&t)),
-            Segment::Cloze(content) => {
-                spans.extend(markdown_spans_styled(
-                    &content,
-                    Style::default().fg(CLOZE_HIGHLIGHT),
-                ))
-            }
+            Segment::Cloze(content) => spans.extend(markdown_spans_styled(
+                &content,
+                Style::default().fg(CLOZE_HIGHLIGHT),
+            )),
         }
     }
     vec![Line::from(spans)]

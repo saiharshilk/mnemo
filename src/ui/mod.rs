@@ -1,6 +1,7 @@
 use crate::app::{App, Screen};
 use ratatui::Frame;
 
+mod anki_export;
 mod auth_error;
 mod card_modal;
 mod deck_list;
@@ -79,6 +80,14 @@ pub fn draw(f: &mut Frame, app: &App) {
             &app.import_decks,
             app.import_selected,
             &app.import_deck_name,
+        ),
+        Screen::ExportAnki => anki_export::draw(
+            f,
+            app.anki_export_step,
+            &app.input_buffer,
+            app.anki_export_error.as_deref(),
+            app.anki_export_preview.as_ref(),
+            &app.anki_export_deck_name,
         ),
     }
 }

@@ -1,3 +1,4 @@
+use crate::anki_export::{self, AnkiExportPreview};
 use crate::auth::{AuthUpdate, Session, github, supabase};
 use crate::csv_import::CsvPreview;
 use crate::db::{self, CardWithReview, Deck, DeckSummary};
@@ -8,7 +9,7 @@ use anyhow::Result;
 use chrono::{NaiveDate, Utc};
 use rs_fsrs::Rating;
 use rusqlite::Connection;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::thread;
@@ -42,6 +43,7 @@ pub enum Screen {
     },
     Stats,
     ImportCsv,
+    ExportAnki,
     Search,
 }
 
@@ -53,6 +55,31 @@ pub enum ImportStep {
     NewDeckName,
     ExistingDeck,
     Confirm,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnkiExportStep {
+    FilePath,
+    Preview,
+    Confirm,
+}
+
+impl AnkiExportStep {
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::FilePath => "File",
+            Self::Preview => "Preview",
+            Self::Confirm => "Confirm",
+        }
+    }
+
+    pub fn hint(self) -> &'static str {
+        match self {
+            Self::FilePath => "Enter continue  ·  Esc back",
+            Self::Preview => "Enter continue  ·  Esc change path",
+            Self::Confirm => "Enter confirm export  ·  Esc cancel  q quit",
+        }
+    }
 }
 
 impl ImportStep {
@@ -132,6 +159,12 @@ pub struct App {
     pub stats_state: Option<StatsState>,
 
     pub import_step: ImportStep,
+    pub anki_export_step: AnkiExportStep,
+    pub anki_export_preview: Option<AnkiExportPreview>,
+    pub anki_export_deck_id: Option<i64>,
+    pub anki_export_deck_name: String,
+    pub anki_export_path: Option<PathBuf>,
+    pub anki_export_error: Option<String>,
     pub import_preview: Option<CsvPreview>,
     pub import_decks: Vec<(i64, String)>,
     pub import_selected: usize,
@@ -176,6 +209,12 @@ impl App {
             auth_cancel: None,
             stats_state: None,
             import_step: ImportStep::FilePath,
+            anki_export_step: AnkiExportStep::FilePath,
+            anki_export_preview: None,
+            anki_export_deck_id: None,
+            anki_export_deck_name: String::new(),
+            anki_export_path: None,
+            anki_export_error: None,
             import_preview: None,
             import_decks: Vec::new(),
             import_selected: 0,
@@ -288,6 +327,7 @@ impl App {
             Action::Cram => self.handle_start_review(true)?,
             Action::Stats => self.handle_stats()?,
             Action::Import => self.start_import()?,
+            Action::ExportAnki => self.start_anki_export()?,
             Action::Search => self.start_search()?,
             Action::ToggleView => self.handle_toggle_view(),
             Action::Flip => self.handle_flip(),
@@ -304,6 +344,7 @@ impl App {
                 | Screen::NewDeckModal
                 | Screen::RenameDeckModal { .. }
                 | Screen::ImportCsv
+                | Screen::ExportAnki
                 | Screen::Search
         )
     }
@@ -330,6 +371,9 @@ impl App {
     fn handle_input_action(&mut self, action: Action) -> Result<()> {
         if matches!(self.current_screen(), Screen::ImportCsv) {
             return self.handle_import_input(action);
+        }
+        if matches!(self.current_screen(), Screen::ExportAnki) {
+            return self.handle_anki_export_input(action);
         }
         if matches!(self.current_screen(), Screen::Search) {
             return self.handle_search_input(action);
@@ -361,6 +405,140 @@ impl App {
             Action::Up => self.move_search_selection(-1),
             Action::Down => self.move_search_selection(1),
             _ => {}
+        }
+        Ok(())
+    }
+
+    fn handle_anki_export_input(&mut self, action: Action) -> Result<()> {
+        match action {
+            Action::Back => self.anki_export_back()?,
+            Action::Confirm => self.anki_export_confirm()?,
+            Action::Char(c) if matches!(self.anki_export_step, AnkiExportStep::FilePath) => {
+                self.input_buffer.push(c);
+            }
+            Action::Backspace if matches!(self.anki_export_step, AnkiExportStep::FilePath) => {
+                self.input_buffer.pop();
+            }
+            Action::Quit => self.should_quit = true,
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn start_anki_export(&mut self) -> Result<()> {
+        let (deck_id, deck_name) = match self.current_screen() {
+            Screen::DeckList => {
+                let Some(deck) = self.decks.get(self.deck_list_selected) else {
+                    return Ok(());
+                };
+                (deck.deck.id, deck.deck.name.clone())
+            }
+            Screen::DeckView { .. } => {
+                let Some(deck) = self.current_deck.as_ref() else {
+                    return Ok(());
+                };
+                (deck.id, deck.name.clone())
+            }
+            _ => return Ok(()),
+        };
+        self.input_buffer.clear();
+        self.anki_export_error = None;
+        self.anki_export_preview = None;
+        self.anki_export_path = None;
+        self.anki_export_deck_id = Some(deck_id);
+        self.anki_export_deck_name = deck_name;
+        self.anki_export_step = AnkiExportStep::FilePath;
+        self.screen_stack.push(Screen::ExportAnki);
+        Ok(())
+    }
+
+    fn anki_export_confirm(&mut self) -> Result<()> {
+        match self.anki_export_step {
+            AnkiExportStep::FilePath => {
+                let path = expand_path(self.input_buffer.trim());
+                let output = if self.input_buffer.trim().is_empty() {
+                    PathBuf::new()
+                } else {
+                    path
+                };
+                let deck_id = self.anki_export_deck_id.expect("deck before export");
+                match anki_export::preview_deck(
+                    &self.conn,
+                    deck_id,
+                    &self.anki_export_deck_name,
+                    &output,
+                ) {
+                    Ok(preview) if preview.paths.is_empty() => {
+                        self.anki_export_error = Some("no valid cards to export".to_string());
+                    }
+                    Ok(preview) => {
+                        self.anki_export_preview = Some(preview);
+                        self.anki_export_path = Some(output);
+                        self.anki_export_error = None;
+                        self.input_buffer.clear();
+                        self.anki_export_step = AnkiExportStep::Preview;
+                    }
+                    Err(error) => self.anki_export_error = Some(error.to_string()),
+                }
+            }
+            AnkiExportStep::Preview => {
+                self.anki_export_step = AnkiExportStep::Confirm;
+            }
+            AnkiExportStep::Confirm => {
+                let deck_id = self.anki_export_deck_id.expect("deck before export");
+                let output = self
+                    .anki_export_path
+                    .as_deref()
+                    .unwrap_or_else(|| Path::new(""));
+                let result = anki_export::export_deck(
+                    &self.conn,
+                    deck_id,
+                    &self.anki_export_deck_name,
+                    output,
+                )?;
+                let files = result
+                    .paths
+                    .iter()
+                    .map(|path| path.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let mut message = format!("exported Anki files: {files}");
+                if result.skipped_rows > 0 {
+                    message.push_str(&format!(" ({} rows skipped)", result.skipped_rows));
+                }
+                let return_to_deck_view = self
+                    .screen_stack
+                    .iter()
+                    .any(|screen| matches!(screen, Screen::DeckView { .. }));
+                self.screen_stack.pop();
+                self.input_buffer.clear();
+                self.anki_export_preview = None;
+                self.anki_export_error = None;
+                if return_to_deck_view {
+                    self.deck_view_message = Some(message);
+                } else {
+                    self.import_status = Some(message);
+                    self.import_status_at = Some(Instant::now());
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn anki_export_back(&mut self) -> Result<()> {
+        match self.anki_export_step {
+            AnkiExportStep::FilePath => self.pop_screen()?,
+            AnkiExportStep::Preview => {
+                self.anki_export_step = AnkiExportStep::FilePath;
+                self.input_buffer = self
+                    .anki_export_path
+                    .as_ref()
+                    .filter(|path| !path.as_os_str().is_empty())
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_default();
+                self.anki_export_error = None;
+            }
+            AnkiExportStep::Confirm => self.anki_export_step = AnkiExportStep::Preview,
         }
         Ok(())
     }

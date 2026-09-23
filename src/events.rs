@@ -14,6 +14,7 @@ pub enum Action {
     Cram,
     Stats,
     Import,
+    ExportAnki,
     Search,
     ToggleView,
     Flip,
@@ -44,6 +45,7 @@ pub fn map_key(event: KeyEvent) -> Option<Action> {
         // 's' opens the Stats screen from DeckList and is ignored elsewhere.
         KeyCode::Char('s') => Some(Action::Stats),
         KeyCode::Char('i') => Some(Action::Import),
+        KeyCode::Char('a') => Some(Action::ExportAnki),
         KeyCode::Char('/') => Some(Action::Search),
         // 'v' toggles the heatmap view on the Stats screen.
         KeyCode::Char('v') => Some(Action::ToggleView),

@@ -98,6 +98,16 @@ pub fn deck_name_exists(conn: &Connection, name: &str) -> Result<bool> {
     Ok(count > 0)
 }
 
+pub fn get_deck_by_name(conn: &Connection, name: &str) -> Result<Option<Deck>> {
+    conn.query_row(
+        "SELECT id, name, description, created_at FROM decks WHERE name = ?1",
+        params![name],
+        row_to_deck,
+    )
+    .optional()
+    .context("failed to fetch deck")
+}
+
 pub fn get_deck(conn: &Connection, deck_id: i64) -> Result<Option<Deck>> {
     conn.query_row(
         "SELECT id, name, description, created_at FROM decks WHERE id = ?1",

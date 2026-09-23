@@ -1,15 +1,18 @@
+mod anki_export;
 mod app;
 mod auth;
+mod cli;
 mod csv_import;
 mod db;
 mod events;
 mod fsrs;
 mod paths;
+mod text;
 mod ui;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use app::App;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event},
     execute,
@@ -22,13 +25,47 @@ use std::time::Duration;
 
 #[derive(Parser)]
 #[command(name = "mnemo", about = "Terminal spaced-repetition flashcards")]
-struct Cli {}
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    Import {
+        path: std::path::PathBuf,
+    },
+    Export {
+        #[arg(long)]
+        anki: bool,
+        deck_name: String,
+        #[arg(short, long)]
+        output: Option<std::path::PathBuf>,
+    },
+}
 
 fn main() -> Result<()> {
-    let _cli = Cli::parse();
+    let cli = Cli::parse();
 
     // Load secrets from .env if present; ignore when the file is missing.
     let _ = dotenvy::dotenv();
+
+    if let Some(command) = cli.command {
+        match command {
+            Command::Import { path } => return cli::run_import(&path),
+            Command::Export {
+                anki,
+                deck_name,
+                output,
+            } => {
+                if anki {
+                    return cli::run_anki_export(&deck_name, output.as_deref());
+                }
+                let output = output.context("--output is required for generic CSV export")?;
+                return cli::run_export(&deck_name, &output);
+            }
+        }
+    }
 
     let conn = open_connection()?;
     let mut app = App::new(conn)?;

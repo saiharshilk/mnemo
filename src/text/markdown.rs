@@ -85,15 +85,25 @@ mod tests {
     #[test]
     fn parses_bold_and_italic() {
         let spans = markdown_spans("**bold** and *italic*");
-        assert!(spans.iter().any(|s| s.style.add_modifier.contains(Modifier::BOLD)));
-        assert!(spans.iter().any(|s| s.style.add_modifier.contains(Modifier::ITALIC)));
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.style.add_modifier.contains(Modifier::BOLD))
+        );
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.style.add_modifier.contains(Modifier::ITALIC))
+        );
     }
 
     #[test]
     fn parses_inline_code() {
         let spans = markdown_spans("use `Vec` here");
-        assert!(spans
-            .iter()
-            .any(|s| s.style.add_modifier.contains(Modifier::UNDERLINED)));
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.style.add_modifier.contains(Modifier::UNDERLINED))
+        );
     }
 }
